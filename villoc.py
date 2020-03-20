@@ -149,31 +149,29 @@ class Marker(Block):
         return "unknown"
 
 
-def match_ptr(state, ptr):
-
-    if ptr is None:
-        return None, None
-
-    s, smallest_match = None, None
-
-    for i, block in enumerate(state):
-        if block.uaddr != ptr:
-            continue
-        if smallest_match is None or smallest_match.usize >= block.usize:
-            s, smallest_match = i, block
-
-    if smallest_match is None:
-        state.errors.append("Couldn't find block at %#x, added marker." %
-                            (ptr - Block.header))
-        # We'll add a small tmp block here to show the error.
-        state.append(Marker(ptr, error=True))
-
-    return s, smallest_match
-    
-
-
-
 class Misc:
+    @staticmethod
+    def match_ptr(state, ptr):
+
+        if ptr is None:
+            return None, None
+
+        s, smallest_match = None, None
+
+        for i, block in enumerate(state):
+            if block.uaddr != ptr:
+                continue
+            if smallest_match is None or smallest_match.usize >= block.usize:
+                s, smallest_match = i, block
+
+        if smallest_match is None:
+            state.errors.append("Couldn't find block at %#x, added marker." %
+                                (ptr - Block.header))
+            # We'll add a small tmp block here to show the error.
+            state.append(Marker(ptr, error=True))
+
+        return s, smallest_match
+    
     @staticmethod
     def malloc(state, ret, size):
 
@@ -192,7 +190,7 @@ class Misc:
         if ptr is 0:
             return
 
-        s, match = match_ptr(state, ptr)
+        s, match = Misc.match_ptr(state, ptr)
 
         if match is None:
             return
