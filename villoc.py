@@ -8,6 +8,7 @@ import codecs
 
 
 class State(list):
+    '''该类实际上是一个list of Blocks'''
 
     def __init__(self, *args, **kwargs):
         self.errors = []
@@ -35,6 +36,13 @@ class State(list):
 
 
 class Printable():
+    # 定义抽象的成员，便于继承
+    def start(self):
+        raise NotImplementedError
+
+    def end(self):
+        raise NotImplementedError
+    details = None
 
     unit_width = 10
     classes = ["block"]
@@ -53,7 +61,8 @@ class Printable():
         if self.details:
             out.write('<strong>%#x</strong><br />' % self.start())
             out.write("%s<br />" % self.more_html())
-            out.write("<br />".join("<strong>%s</strong>" % m for m in self.meta))
+            out.write("<br />".join("<strong>%s</strong>" %
+                                    m for m in self.meta))
 
         else:
             out.write('&nbsp;')
@@ -69,7 +78,7 @@ class Printable():
 
 
 class Empty(Printable):
-
+    '''展示free释放内存后的空闲空间'''
     classes = Printable.classes + ["empty"]
 
     def __init__(self, start, end, display=True, **kwargs):
@@ -92,7 +101,7 @@ class Empty(Printable):
 
 
 class Block(Printable):
-
+    '''展示分配后的堆块'''
     header = 8
     footer = 0
     round = 0x10
@@ -110,9 +119,11 @@ class Block(Printable):
         super().__init__(**kwargs)
 
     def start(self):
+        '''在State.boundaries()调用时，返回boundary下界'''
         return self.uaddr - self.header
 
     def end(self):
+        '''在State.boundaries()调用时，返回boundary上界'''
         size = max(self.minsz, self.usize + self.header + self.footer)
         rsize = size + (self.round - 1)
         rsize = rsize - (rsize % self.round)
@@ -150,6 +161,7 @@ class Marker(Block):
 
 
 class Misc:
+    '''将先前的全局函数归入该类管理'''
     @staticmethod
     def match_ptr(state, ptr):
 
@@ -171,7 +183,7 @@ class Misc:
             state.append(Marker(ptr, error=True))
 
         return s, smallest_match
-    
+
     @staticmethod
     def malloc(state, ret, size):
 
@@ -182,7 +194,7 @@ class Misc:
 
     @staticmethod
     def calloc(state, ret, nmemb, size):
-        malloc(state, ret, nmemb * size)
+        Misc.malloc(state, ret, nmemb * size)
 
     @staticmethod
     def free(state, ret, ptr):
@@ -205,16 +217,17 @@ class Misc:
     def realloc(state, ret, ptr, size):
 
         if not ptr:
-            return malloc(state, ret, size)
+            return Misc.malloc(state, ret, size)
         elif not size:
-            return free(state, ret, ptr)
+            return Misc.free(state, ret, ptr)
 
-        s, match = match_ptr(state, ptr)
+        s, match = Misc.match_ptr(state, ptr)
 
         if match is None:
             return
         elif ret is None:
-            state[s] = Block(match.uaddr, match.usize, color=match.color, meta=match.meta)
+            state[s] = Block(match.uaddr, match.usize,
+                             color=match.color, meta=match.meta)
             state[s].error = True
         else:
             state[s] = Block(ret, size, color=match.color, meta=match.meta)
@@ -224,9 +237,12 @@ class Misc:
         msg = args[0]
         anotations = args[1:]
         return ([], ["after: %s, meta=%s" % (msg, anotations)], anotations)
-    
+
     @staticmethod
     def sanitize(x):
+        '''
+        去掉前后缀空白字符，并返回整数或者非数字字符串
+        '''
         if x is None:
             return None
         x = x.strip()
@@ -243,7 +259,8 @@ class Misc:
     def parse_ltrace(ltrace):
 
         match_call = re.compile(r"^([@A-z_\.]+->)?([@A-z_]+)\((.*)\) += (.*)$")
-        match_err = re.compile(r"^([@A-z_\.]+->)?([@A-z_]+)\((.*) <no return \.\.\.>")
+        match_err = re.compile(
+            r"^([@A-z_\.]+->)?([@A-z_]+)\((.*) <no return \.\.\.>")
 
         for line in ltrace:
 
@@ -274,7 +291,7 @@ class Misc:
 
     @staticmethod
     def build_timeline(events):
-
+        # events 是一个迭代器，它迭代出trace中的函数名、参数和返回值。
         boundaries = set()
         timeline = [State()]
         errors = []
@@ -291,6 +308,7 @@ class Misc:
             except KeyError:
                 continue
 
+            # TODO:以State.tmp作为临时标志？
             state = State(b for b in timeline[-1] if not b.tmp)
             state.errors.extend(errors)
             state.info.extend(info)
@@ -335,7 +353,8 @@ class Misc:
     @staticmethod
     def print_state(out, boundaries, state):
 
-        out.write('<div class="state %s">\n' % ("error" if state.errors else ""))
+        out.write('<div class="state %s">\n' %
+                  ("error" if state.errors else ""))
 
         known_stops = set()
 
@@ -389,7 +408,6 @@ class Misc:
                         known_stops.add(i)
 
                     last = i
-
 
             if current:
                 raise RuntimeError("Block was started but never finished.")
@@ -501,7 +519,8 @@ class Misc:
 
         out.write('</style>\n')
 
-        out.write('<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>')
+        out.write(
+            '<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>')
         out.write('''<script>
     var scrollTimeout = null;
     $(window).scroll(function(){
@@ -526,6 +545,7 @@ class Misc:
         out.write('</div>\n')
 
         out.write('</body>\n')
+
 
 operations = {
     'free': Misc.free,
@@ -568,9 +588,9 @@ if __name__ == '__main__':
 
     if args.raw:
         Block.header, Block.footer, Block.round, Block.minsz = 0, 0, 1, 0
+    # TODO:下面的代码是否应该处于else范围内？
     Block.header, Block.footer, Block.round, Block.minsz = (
         args.header, args.footer, args.round, args.minsz)
-
 
     noerrors = codecs.getreader('utf8')(args.ltrace.detach(), errors='ignore')
     timeline, boundaries = Misc.build_timeline(Misc.parse_ltrace(noerrors))
