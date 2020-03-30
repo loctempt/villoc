@@ -29,6 +29,7 @@ class State(list):
     def boundaries(self):
         bounds = set()
         for block in self:
+            # block.boundries()继承自Printable
             lo, hi = block.boundaries()
             bounds.add(lo)
             bounds.add(hi)
@@ -162,6 +163,7 @@ class Marker(Block):
 
 class Misc:
     '''将先前的全局函数归入该类管理'''
+
     @staticmethod
     def match_ptr(state, ptr):
 
@@ -359,6 +361,8 @@ class Misc:
         known_stops = set()
 
         todo = state
+        # 若state为空，while会被跳过；若state最后一个元素被删除，
+        # 亦不会被打印出来
         while todo:
 
             out.write('<div class="line" style="">\n')
