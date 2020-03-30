@@ -13,13 +13,6 @@ class Watcher:
     ta = {}
     tf = {}
 
-    operations = {
-        'free': Watcher.free,
-        'malloc': Watcher.malloc,
-        'calloc': Watcher.calloc,
-        'realloc': Watcher.realloc,
-    }
-
     #TODO: 完成这几个回调
     @staticmethod
     def malloc(size):
@@ -37,6 +30,23 @@ class Watcher:
     def free(addr):
         pass
 
+    @staticmethod
+    def inst_read(addr):
+        pass
+
+    @staticmethod
+    def inst_write(addr):
+        pass
+
+    operations = {
+        'free': free,
+        'malloc': malloc,
+        'calloc': calloc,
+        'realloc': realloc,
+        'r': inst_read,
+        'w': inst_write
+    }
+
     def __init__(self, talloc):
         # 保存原始talloc数据
         self.talloc = talloc
@@ -44,6 +54,10 @@ class Watcher:
         self.status = []
         # 记录函数名和参数，在函数返回时与ret一同构造完整函数调用记录
         self.func_call = None
+
+    def handle_op(self, op, *etc):
+        # TODO: 完成调用op的操作
+        pass
 
     def watch_line(self, line):
         line = line.strip()
@@ -88,6 +102,3 @@ if __name__ == "__main__":
     watcher = Watcher(noerrors)
     for tup in watcher.watch():
         print(tup)
-    # print(noerrors)
-    # for line in noerrors:
-    #     print(line.strip())
