@@ -45,13 +45,13 @@ class Watcher:
             return None
         return begin
 
-    def __is_block_exists(self, table: dict, addr: int):
+    def __is_addr_valid(self, table: dict, addr: int):
         lst = sorted(list(table))
         pos = self.__binary_serach(lst, addr)
         if pos is None:
             return False
         base = lst[pos]
-        return addr < base + table[base] - 1
+        return addr < base + table[base]
 
     def is_uaf(self, addr):
         # TODO: 完成uaf判断方法
@@ -61,13 +61,65 @@ class Watcher:
         # TODO: 完成overflow判断方法
         pass
 
-    #TODO: 完成这几个回调
+    def split_tb(self, base, new_block_size):
+        # TODO: 完成切割方法
+        '''
+        检查新分配的堆块“nb(new block)”是否与tf中记录的空闲堆块“tb(block in tf)”存在以下关系：
+        nb在tb首部与tb相交但不包含、
+        nb在tb尾部与tb相交但不包含、
+        nb包含于tb。
+        '''
+        nb_head = base
+        nb_tail = base + new_block_size
+        nb_head_in_tb = self.__is_addr_valid(self.tf, nb_head)
+        nb_tail_in_tb = self.__is_addr_valid(self.tf, nb_tail)
+
+        # 无需切割
+        if not (nb_head_in_tb or nb_tail_in_tb):
+            return
+
+        # 对tf进行切割
+        lst = sorted(list(self.tf))
+        # =============================================
+        # 1: nb包含于tb || 2: nb在tb尾部与tb相交但不包含
+        #
+        # 情况1：
+        # +----------------+
+        # |  tb  +------+  |
+        # +------+------+--+
+        #        |  nb  |
+        #        +------+
+        # 情况2：
+        # +----------------+
+        # |       tb   +---|---------+
+        # +------------+---+  nb     |
+        #              +-------------+
+        # =============================================
+        if nb_head_in_tb:
+            pos = self.__binary_serach(lst, nb_head)
+            tb_base = lst[pos]
+            tb_size = self.tf[tb_base]
+            self.tf[tb_base] = nb_head - tb_base
+            if nb_tail_in_tb:
+                self.tf[nb_tail] = tb_size - (nb_tail - tb_base)
+        # =============================================
+        # nb在tb首部与tb相交但不包含
+        #           +----------------+
+        # +---------+---+   tb       |
+        # |    nb   +---+------------+
+        # +-------------+
+        # =============================================
+        elif nb_tail_in_tb:
+            pos = self.__binary_serach(lst, nb_tail)
+            tb_base = lst[pos]
+            tb_size = self.tf[tb_base]
+            self.tf.pop(tb_base)
+            self.tf[nb_tail] = tb_size - (nb_tail - tb_base)
+
     def malloc(self, size, ret):
         self.ta[ret] = size
-        if ret not in self.tf:
-            return
-        # TODO: 切割tf记录
-
+        # 新的堆块占据了tf中堆块记录的空间，需要对该记录进行分割
+        self.split_tb(ret, size)
 
     def calloc(self, nmemb, size, ret):
         self.malloc(nmemb * size, ret)
@@ -98,7 +150,6 @@ class Watcher:
         # TODO: 调用uaf和overflow处理方法
         self.is_uaf(addr)
         self.is_heap_overflow(addr)
-
 
     def __init__(self, talloc):
         # 保存原始talloc数据
