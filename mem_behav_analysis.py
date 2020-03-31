@@ -62,7 +62,6 @@ class Watcher:
         pass
 
     def split_tb(self, base, new_block_size):
-        # TODO: 完成切割方法
         '''
         检查新分配的堆块“nb(new block)”是否与tf中记录的空闲堆块“tb(block in tf)”存在以下关系：
         nb在tb首部与tb相交但不包含、
@@ -123,23 +122,17 @@ class Watcher:
 
     def calloc(self, nmemb, size, ret):
         self.malloc(nmemb * size, ret)
-        # self.ta[ret] = nmemb * size
-        # print("calloc", nmemb, size, ret)
-        # print("calloc {} @ {}".format(nmemb * size, ret))
 
     def realloc(self, ptr, size, ret):
         if ptr:
             self.free(ptr)
         self.malloc(size, ret)
-        # print("realloc", ptr, size, ret)
-        # print("realloc {} @ {}".format())
 
     def free(self, addr):
         if addr not in self.ta:
             return
         self.tf[addr] = self.ta[addr]
         self.ta.pop(addr)
-        # print("free", addr)
 
     def inst_read(self, addr):
         # TODO: uaf overflow 分别编写方法
