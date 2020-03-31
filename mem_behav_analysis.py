@@ -131,6 +131,7 @@ class Watcher:
     def free(self, addr):
         if addr not in self.ta:
             return
+        # TODO: 需要实现相邻tb的合并操作（insert_into_tf()）
         self.tf[addr] = self.ta[addr]
         self.ta.pop(addr)
 
