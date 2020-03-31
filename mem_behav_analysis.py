@@ -21,7 +21,7 @@ class Watcher:
     ta = {}
     tf = {}
 
-    def binary_serach(self, lst: list, target, begin=None, end=None):
+    def __binary_serach(self, lst: list, target, begin=None, end=None):
         '''
         对堆块基址的二分查找：
         找到基址小于等于target，且基址最大的堆块下标
@@ -45,9 +45,9 @@ class Watcher:
             return None
         return begin
 
-    def is_block_exists(self, table: dict, addr: int):
+    def __is_block_exists(self, table: dict, addr: int):
         lst = sorted(list(table))
-        pos = self.binary_serach(lst, addr)
+        pos = self.__binary_serach(lst, addr)
         if pos is None:
             return False
         base = lst[pos]
@@ -67,7 +67,7 @@ class Watcher:
         if ret not in self.tf:
             return
         # TODO: 切割tf记录
-        # print("malloc", size, "@", ret)
+
 
     def calloc(self, nmemb, size, ret):
         self.malloc(nmemb * size, ret)
@@ -91,15 +91,14 @@ class Watcher:
 
     def inst_read(self, addr):
         # TODO: uaf overflow 分别编写方法
-        if self.is_block_exists(self.ta, addr):
-            return InstStat.OK
-        if self.is_block_exists(self.tb, addr):
-            pass
+        self.is_uaf(addr)
+        self.is_heap_overflow(addr)
 
     def inst_write(self, addr):
         # TODO: 调用uaf和overflow处理方法
-        pass
-        # print("write @", addr)
+        self.is_uaf(addr)
+        self.is_heap_overflow(addr)
+
 
     def __init__(self, talloc):
         # 保存原始talloc数据
