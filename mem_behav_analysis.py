@@ -14,6 +14,107 @@ class InstStat(Enum):
     ERR = -1
 
 
+class HeapBlock:
+    '''
+    用于表示堆块
+    '''
+    header = 8
+    footer = 0
+    round_sz = 0x10
+    min_sz = 0x20
+
+    def __init__(self, addr, size):
+        self.uaddr = addr
+        self.usize = size
+
+    def get_rsize(self):
+        size = max(self.min_sz, self.usize + self.header + self.footer)
+        # rsize for "rounded size"
+        rsize = size + (self.round_sz - 1)
+        rsize = rsize - (rsize % self.round_sz)
+        return rsize
+
+    def get_usize(self):
+        return self.usize
+
+    def get_uaddr(self):
+        return self.uaddr
+
+    def start(self):
+        '''返回boundary下界'''
+        return self.uaddr - self.header
+
+    def end(self):
+        '''返回boundary上界'''
+        rsize = self.get_rsize()
+        return self.uaddr - self.header + rsize
+
+    def __lt__(self, another: HeapBlock):
+        return self.start() < another.start()
+
+    def __gt__(self, another: HeapBlock):
+        return self.start() > another.start()
+
+    def __eq__(self, another: HeapBlock):
+        return self.start() == another.start()
+
+
+class Table:
+    '''
+    用于表示内存分配表（其实例为ta、tb等）
+    '''
+
+    def __init__(self):
+        self.__alloc_table = []
+
+    def __maximized_min_idx(self, target_addr: int):
+        '''
+        对堆块基址的二分查找：
+        找到基址小于等于target，且基址最大的堆块下标
+        '''
+        if begin is None:
+            begin = 0
+        if end is None:
+            end = len(self.__alloc_table)
+        if begin >= end:
+            raise Exception("Begin is greater than end.")
+        end -= 1
+        while begin < end:
+            mid = begin + (end - begin + 1) // 2
+            if self.__alloc_table[mid].start() == target_addr:
+                return mid
+            if self.__alloc_table[mid].start() > target_addr:
+                end = mid - 1
+            else:
+                begin = mid
+        if self.__alloc_table[begin].start() > target_addr:
+            return None
+        return begin
+
+    # TODO: 完成该方法
+    def __is_overlapped(self, block: HeapBlock):
+        pass
+
+    def __is_addr_valid(self, addr: int):
+        '''
+        此处的valid意为给定的addr位于某个block之内
+        '''
+        pos = self.__maximized_min_idx(addr)
+        if pos is None:
+            return False
+        block: HeapBlock = self.__alloc_table[pos]
+        # 若pos非空，即已经隐含“addr >= block.start()”这个条件了。
+        # 故这里只需判断addr < block.end()
+        return addr < block.end()
+
+    def inseart(self, block: HeapBlock):
+        bisect.insort_left(self.__alloc_table, block)
+
+    # TODO: 思考应该通过什么参数来pop
+    def pop(self, addr: int):
+        pass
+
+
 class Watcher:
     func_call_patt = re.compile(r"^(\d+)\s*([A-z_]+)\((.*)\)$")
     func_ret_patt = re.compile(r"^(\d+)\s*returns: (.+)$")
@@ -21,6 +122,7 @@ class Watcher:
     ta = {}
     tf = {}
 
+    # TODO: 重构删除
     def __binary_serach(self, lst: list, target, begin=None, end=None):
         '''
         对堆块基址的二分查找：
@@ -44,6 +146,7 @@ class Watcher:
         if lst[begin] > target:
             return None
         return begin
+    # TODO: 重构删除
 
     def __is_addr_valid(self, table: dict, addr: int):
         lst = sorted(list(table))
