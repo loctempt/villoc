@@ -49,6 +49,13 @@ class HeapBlock:
         rsize = self.get_rsize()
         return self.uaddr - self.header + rsize
 
+    def change_rsize(self, new_size: int):
+        '''
+        改变整个block的size，即self.end() - self.start()的大小
+        '''
+        self.usize = new_size - self.header - self.footer
+        # TODO: 在分配堆块时是否会将空闲堆块切割到小于堆块最小值？
+
     def __lt__(self, another: HeapBlock):
         return self.start() < another.start()
 
@@ -59,60 +66,189 @@ class HeapBlock:
         return self.start() == another.start()
 
 
-class Table:
+class HeapRepr:
     '''
     用于表示内存分配表（其实例为ta、tb等）
     '''
 
     def __init__(self):
-        self.__alloc_table = []
+        self.__ta = []
+        self.__tf = []
 
-    def __maximized_min_idx(self, target_addr: int):
+    def __maximized_min_idx(self, lst: list, target_addr: int):
         '''
         对堆块基址的二分查找：
         找到基址小于等于target，且基址最大的堆块下标
         '''
-        if begin is None:
-            begin = 0
-        if end is None:
-            end = len(self.__alloc_table)
+        # if begin is None:
+        begin = 0
+        # if end is None:
+        end = len(lst)
         if begin >= end:
             raise Exception("Begin is greater than end.")
         end -= 1
         while begin < end:
             mid = begin + (end - begin + 1) // 2
-            if self.__alloc_table[mid].start() == target_addr:
+            if lst[mid].start() == target_addr:
                 return mid
-            if self.__alloc_table[mid].start() > target_addr:
+            if lst[mid].start() > target_addr:
                 end = mid - 1
             else:
                 begin = mid
-        if self.__alloc_table[begin].start() > target_addr:
+        if lst[begin].start() > target_addr:
             return None
         return begin
 
-    # TODO: 完成该方法
-    def __is_overlapped(self, block: HeapBlock):
-        pass
+    # def __is_overlapped(self, block: HeapBlock):
+    #     pass
 
-    def __is_addr_valid(self, addr: int):
+    def __is_addr_valid(self, lst: list, addr: int) -> bool:
         '''
         此处的valid意为给定的addr位于某个block之内
         '''
-        pos = self.__maximized_min_idx(addr)
+        pos = self.__maximized_min_idx(lst, addr)
         if pos is None:
             return False
-        block: HeapBlock = self.__alloc_table[pos]
+        block: HeapBlock = self.__ta[pos]
         # 若pos非空，即已经隐含“addr >= block.start()”这个条件了。
         # 故这里只需判断addr < block.end()
-        return addr < block.end()
+        if addr < block.end():
+            return block
 
-    def inseart(self, block: HeapBlock):
-        bisect.insort_left(self.__alloc_table, block)
+    def __tf_prev_idx_of(self, block: HeapBlock):
+        prev_idx = self.__maximized_min_idx(self.__tf, block.start())
+        if prev_idx is None:
+            return None
+        return prev_idx
 
-    # TODO: 思考应该通过什么参数来pop
-    def pop(self, addr: int):
-        pass
+    def __tf_next_idx_of(self, block: HeapBlock):
+        next_idx = self.__maximized_min_idx(self.__tf, block.end())
+        if next_idx is None:
+            return None
+        next_block = self.__tf[next_idx]
+        # “后一个堆块”实际上位于当前堆块之前，不需向后合并
+        if next_block.begin() != block.end():
+            return None
+        return next_idx
+
+    def __ta_insert(self, block: HeapBlock):
+        bisect.insort_left(self.__ta, block)
+
+    def __ta_pop(self, uaddr: int):
+        idx = self.__maximized_min_idx(self.__ta, uaddr)
+        if idx is None:
+            return None
+        return self.__ta.pop(idx)
+
+    def __tf_insert(self, block: HeapBlock):
+        '''
+        在向tf插入元素时需要处理向前/向后合并
+        '''
+        next_idx = self.__tf_next_idx_of(block)
+        prev_idx = self.__tf_prev_idx_of(block)
+        next_block: HeapBlock = None if next_idx is None else self.__tf[next_idx]
+        prev_block: HeapBlock = None if prev_idx is None else self.__tf[prev_idx]
+        if next_block is not None and prev_block is not None:
+            next_rsize = next_block.end() - next_block.start()
+            curr_rsize = block.end() - block.start()
+            prev_rsize = prev_block.end() - prev_block.start()
+            prev_block.change_rsize(next_rsize + curr_rsize + prev_rsize)
+            self.__tf.pop(next_idx)
+        if next_block is not None:
+            next_block.uaddr = block.uaddr
+            next_rsize = next_block.end() - next_block.start()
+            curr_rsize = block.end() - block.start()
+            next_block.change_rsize(next_rsize + curr_rsize)
+        if prev_block is not None:
+            prev_rsize = prev_block.end() - prev_block.start()
+            curr_rsize = block.end() - block.start()
+            prev_block.change_rsize(prev_rsize + curr_rsize)
+
+    def __tf_pop(self, block: HeapBlock):
+        '''
+        在tf中切割已有记录：
+
+        # +----------------+
+        # |       fb   +===|=========+
+        # +------------+---+  block  |
+        #              +=============+
+        # 若block.start()位于fb（front_block）中，切割fb尾部；
+
+        #           +----------------+
+        # +=========+===+   bb       |
+        # |  block  +---+------------+
+        # +=============+
+        # 若block.end()位于bb（back_block）中，切割bb首部。
+
+        # +------------------+
+        # | fb/bb +=======+  |
+        # +-------+-------+--+
+        #         | block |
+        #         +=======+
+        # 若fb、bb是同一个对象，则将其分为两半；
+        #                       some blocks besides fb & bb
+        # +-------------+   +--------+     ...       +--------+   +-------------+
+        # |    fb   +===+===+========+===============+========+===+===+    bb   |
+        # +---------+---+   +--------+    block      +--------+   +---+---------+
+        #           +=================================================+
+        # 否则就删去它们之间的所有元素。
+        '''
+        front_block: HeapBlock = self.__is_addr_valid(self.__tf, block.start()):
+        back_block: HeapBlock = self.__is_addr_valid(self.__tf, blcok.end()):
+        if front_block is not None and back_block is not None:
+            if front_block is back_block:
+                new_front_block_sz = block.start() - front_block.start()
+                new_back_block_sz = back_block.end() - block.end()
+                if new_front_block_sz > 0:
+                    front_block.change_rsize(new_front_block_sz)
+                else:
+                    self.__tf.reomve(front_block)
+                if new_back_block_sz > 0:
+                    new_back_block = HeapBlock(block.end(), 0x10)
+                    new_back_block.change_rsize(new_back_block_sz)
+                    self.__tf_insert(new_back_block)
+            # block的start和end位于不同的fb中，删去这两个tb之间的tb
+            else:
+                front_block_idx = self.__tf.index(front_block)
+                back_block_idx = self.__tf.index(back_block)
+                self.__tf = self.__tf[:front_block_idx + 1] + \
+                    self.__tf[back_block_idx:]
+        if front_block is not None:
+            new_front_block_sz = block.start() - front_block.start()
+            if new_front_block_sz > 0:
+                front_block.change_rsize(new_front_block_sz)
+            else:
+                self.__tf.reomve(front_block)
+        if back_block is not None:
+            new_back_block_sz = back_block.end() - block.end()
+            if new_back_block_sz > 0:
+                back_block.change_rsize(new_back_block_sz)
+            else:
+                self.__tf.remove(back_block)
+        # next_idx = self.__tf_next_idx_of(block)
+        # prev_idx = self.__tf_prev_idx_of(block)
+        # next_block: HeapBlock = None if next_idx is None else self.__tf[next_idx]
+        # prev_block: HeapBlock = None if prev_idx is None else self.__tf[prev_idx]
+
+    def allocate(self, block: HeapBlock):
+        '''
+        负责响应内存分配事件：
+        ta中添加block；
+        检查block是否与tf中的记录重叠，若重叠即进行切割。
+        '''
+        self.__ta_insert(block)
+        self.__tf_pop(block)
+
+    def free(self, uaddr: int):
+        '''
+        负责响应内存释放事件：
+        ta中移除一个元素；
+        tf中添加一个元素，添加时处理向前合并、向后合并。
+        '''
+        freed_block: HeapBlock = self.__ta_pop(uaddr)
+        if freed_block is None:
+            return
+        self.__tf_insert(freed_block)
 
 
 class Watcher:
@@ -312,6 +448,12 @@ class Watcher:
         for line in self.talloc:
             self.watch_line(line)
         return self.status
+
+
+class Worker:
+    # TODO: 完成该主类
+    def __init__(self):
+        pass
 
 
 if __name__ == "__main__":
