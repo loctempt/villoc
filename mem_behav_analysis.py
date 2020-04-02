@@ -83,12 +83,11 @@ class HeapRepr:
         对堆块基址的二分查找：
         找到基址小于等于target，且基址最大的堆块下标
         '''
-        # if begin is None:
         begin = 0
-        # if end is None:
         end = len(lst)
-        if begin >= end:
-            raise Exception("Begin is greater than end.")
+        # lst中尚无元素
+        if begin == end:
+            return None
         end -= 1
         while begin < end:
             mid = begin + (end - begin + 1) // 2
@@ -101,9 +100,6 @@ class HeapRepr:
         if lst[begin].start() > target_addr:
             return None
         return begin
-
-    # def __is_overlapped(self, block: HeapBlock):
-    #     pass
 
     def is_addr_valid(self, lst: list, addr: int) -> bool:
         '''
@@ -141,6 +137,8 @@ class HeapRepr:
         idx = self.__maximized_min_idx(self.__ta, uaddr)
         if idx is None:
             return None
+        if self.__ta[idx].uaddr != uaddr:
+            return None
         return self.__ta.pop(idx)
 
     def __tf_insert(self, block: HeapBlock):
@@ -157,15 +155,17 @@ class HeapRepr:
             prev_rsize = prev_block.end() - prev_block.start()
             prev_block.change_rsize(next_rsize + curr_rsize + prev_rsize)
             self.__tf.pop(next_idx)
-        if next_block is not None:
+        elif next_block is not None:
             next_block.uaddr = block.uaddr
             next_rsize = next_block.end() - next_block.start()
             curr_rsize = block.end() - block.start()
             next_block.change_rsize(next_rsize + curr_rsize)
-        if prev_block is not None:
+        elif prev_block is not None:
             prev_rsize = prev_block.end() - prev_block.start()
             curr_rsize = block.end() - block.start()
             prev_block.change_rsize(prev_rsize + curr_rsize)
+        else:
+            bisect.insort_left(self.__tf, block)
 
     def __tf_pop(self, block: HeapBlock):
         '''
@@ -216,18 +216,20 @@ class HeapRepr:
                 back_block_idx = self.__tf.index(back_block)
                 self.__tf = self.__tf[:front_block_idx + 1] + \
                     self.__tf[back_block_idx:]
-        if front_block is not None:
+        elif front_block is not None:
             new_front_block_sz = block.start() - front_block.start()
             if new_front_block_sz > 0:
                 front_block.change_rsize(new_front_block_sz)
             else:
                 self.__tf.reomve(front_block)
-        if back_block is not None:
+        elif back_block is not None:
             new_back_block_sz = back_block.end() - block.end()
             if new_back_block_sz > 0:
                 back_block.change_rsize(new_back_block_sz)
             else:
                 self.__tf.remove(back_block)
+        else:
+            self.__tf.remove(block)
 
     def allocate(self, block: HeapBlock):
         '''
