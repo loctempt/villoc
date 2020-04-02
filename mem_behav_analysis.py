@@ -56,14 +56,17 @@ class HeapBlock:
         self.usize = new_size - self.header - self.footer
         # TODO: 在分配堆块时是否会将空闲堆块切割到小于堆块最小值？
 
-    def __lt__(self, another: HeapBlock):
+    def __lt__(self, another):
         return self.start() < another.start()
 
-    def __gt__(self, another: HeapBlock):
+    def __gt__(self, another):
         return self.start() > another.start()
 
-    def __eq__(self, another: HeapBlock):
+    def __eq__(self, another):
         return self.start() == another.start()
+
+    def __str__(self):
+        return "uaddr 0x{:x}, usize {}".format(self.uaddr, self.usize)
 
 
 class HeapRepr:
@@ -102,7 +105,7 @@ class HeapRepr:
     # def __is_overlapped(self, block: HeapBlock):
     #     pass
 
-    def __is_addr_valid(self, lst: list, addr: int) -> bool:
+    def is_addr_valid(self, lst: list, addr: int) -> bool:
         '''
         此处的valid意为给定的addr位于某个block之内
         '''
@@ -193,8 +196,8 @@ class HeapRepr:
         #           +=================================================+
         # 否则就删去它们之间的所有元素。
         '''
-        front_block: HeapBlock = self.__is_addr_valid(self.__tf, block.start()):
-        back_block: HeapBlock = self.__is_addr_valid(self.__tf, blcok.end()):
+        front_block: HeapBlock = self.is_addr_valid(self.__tf, block.start())
+        back_block: HeapBlock = self.is_addr_valid(self.__tf, block.end())
         if front_block is not None and back_block is not None:
             if front_block is back_block:
                 new_front_block_sz = block.start() - front_block.start()
@@ -225,10 +228,6 @@ class HeapRepr:
                 back_block.change_rsize(new_back_block_sz)
             else:
                 self.__tf.remove(back_block)
-        # next_idx = self.__tf_next_idx_of(block)
-        # prev_idx = self.__tf_prev_idx_of(block)
-        # next_block: HeapBlock = None if next_idx is None else self.__tf[next_idx]
-        # prev_block: HeapBlock = None if prev_idx is None else self.__tf[prev_idx]
 
     def allocate(self, block: HeapBlock):
         '''
@@ -250,47 +249,17 @@ class HeapRepr:
             return
         self.__tf_insert(freed_block)
 
+    def __str__(self):
+        return "ta: " + \
+            str(list(map(lambda item: str(item), self.__ta))) +\
+            "\n" + "tf: " +\
+            str(list(map(lambda item: str(item), self.__tf)))
+
 
 class Watcher:
     func_call_patt = re.compile(r"^(\d+)\s*([A-z_]+)\((.*)\)$")
     func_ret_patt = re.compile(r"^(\d+)\s*returns: (.+)$")
     inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+)$")
-    ta = {}
-    tf = {}
-
-    # TODO: 重构删除
-    def __binary_serach(self, lst: list, target, begin=None, end=None):
-        '''
-        对堆块基址的二分查找：
-        找到基址小于等于target，且基址最大的堆块下标
-        '''
-        if begin is None:
-            begin = 0
-        if end is None:
-            end = len(lst)
-        if begin >= end:
-            raise Exception("Begin is greater than end.")
-        end -= 1
-        while begin < end:
-            mid = begin + (end - begin + 1) // 2
-            if lst[mid] == target:
-                return mid
-            if lst[mid] > target:
-                end = mid - 1
-            else:
-                begin = mid
-        if lst[begin] > target:
-            return None
-        return begin
-    # TODO: 重构删除
-
-    def __is_addr_valid(self, table: dict, addr: int):
-        lst = sorted(list(table))
-        pos = self.__binary_serach(lst, addr)
-        if pos is None:
-            return False
-        base = lst[pos]
-        return addr < base + table[base]
 
     def is_uaf(self, addr):
         # TODO: 完成uaf判断方法
@@ -300,64 +269,8 @@ class Watcher:
         # TODO: 完成overflow判断方法
         pass
 
-    def split_tb(self, base, new_block_size):
-        '''
-        检查新分配的堆块“nb(new block)”是否与tf中记录的空闲堆块“tb(block in tf)”存在以下关系：
-        nb在tb首部与tb相交但不包含、
-        nb在tb尾部与tb相交但不包含、
-        nb包含于tb。
-        '''
-        nb_head = base
-        nb_tail = base + new_block_size
-        nb_head_in_tb = self.__is_addr_valid(self.tf, nb_head)
-        nb_tail_in_tb = self.__is_addr_valid(self.tf, nb_tail)
-
-        # 无需切割
-        if not (nb_head_in_tb or nb_tail_in_tb):
-            return
-
-        # 对tf进行切割
-        lst = sorted(list(self.tf))
-        # =============================================
-        # 1: nb包含于tb || 2: nb在tb尾部与tb相交但不包含
-        #
-        # 情况1：
-        # +----------------+
-        # |  tb  +------+  |
-        # +------+------+--+
-        #        |  nb  |
-        #        +------+
-        # 情况2：
-        # +----------------+
-        # |       tb   +---|---------+
-        # +------------+---+  nb     |
-        #              +-------------+
-        # =============================================
-        if nb_head_in_tb:
-            pos = self.__binary_serach(lst, nb_head)
-            tb_base = lst[pos]
-            tb_size = self.tf[tb_base]
-            self.tf[tb_base] = nb_head - tb_base
-            if nb_tail_in_tb:
-                self.tf[nb_tail] = tb_size - (nb_tail - tb_base)
-        # =============================================
-        # nb在tb首部与tb相交但不包含
-        #           +----------------+
-        # +---------+---+   tb       |
-        # |    nb   +---+------------+
-        # +-------------+
-        # =============================================
-        elif nb_tail_in_tb:
-            pos = self.__binary_serach(lst, nb_tail)
-            tb_base = lst[pos]
-            tb_size = self.tf[tb_base]
-            self.tf.pop(tb_base)
-            self.tf[nb_tail] = tb_size - (nb_tail - tb_base)
-
     def malloc(self, size, ret):
-        self.ta[ret] = size
-        # 新的堆块占据了tf中堆块记录的空间，需要对该记录进行分割
-        self.split_tb(ret, size)
+        self.heap_repr.allocate(HeapBlock(ret, size))
 
     def calloc(self, nmemb, size, ret):
         self.malloc(nmemb * size, ret)
@@ -368,11 +281,7 @@ class Watcher:
         self.malloc(size, ret)
 
     def free(self, addr):
-        if addr not in self.ta:
-            return
-        # TODO: 需要实现相邻tb的合并操作（insert_into_tf()）
-        self.tf[addr] = self.ta[addr]
-        self.ta.pop(addr)
+        self.heap_repr.free(addr)
 
     def inst_read(self, addr):
         # TODO: uaf overflow 分别编写方法
@@ -391,6 +300,7 @@ class Watcher:
         self.status = []
         # 记录函数名和参数，在函数返回时与ret一同构造完整函数调用记录
         self.func_call = None
+        self.heap_repr = HeapRepr()
         self.operations = {
             'free': self.free,
             'malloc': self.malloc,
@@ -447,6 +357,7 @@ class Watcher:
     def watch(self):
         for line in self.talloc:
             self.watch_line(line)
+        print(self.heap_repr)
         return self.status
 
 
