@@ -78,6 +78,12 @@ class HeapRepr:
         self.__ta = []
         self.__tf = []
 
+    def get_ta(self):
+        return self.__ta[:]
+
+    def get_tf(self):
+        return self.__tf[:]
+
     def __maximized_min_idx(self, lst: list, target_addr: int):
         '''
         对堆块基址的二分查找：
@@ -264,12 +270,22 @@ class Watcher:
     inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+)$")
 
     def is_uaf(self, addr):
-        # TODO: 完成uaf判断方法
-        pass
+        '''
+        addr in ta -> Valid memory access;
+        addr not in ta && addr not in tf -> Invalid memory access;
+        addr not in ta && addr in tf -> Use-after-free
+        '''
+        ta = self.heap_repr.get_ta
+        tf = self.heap_repr.get_tf
+        addr_in_ta = self.heap_repr.is_addr_valid(ta, addr)
+        addr_in_tf = self.heap_repr.is_addr_valid(tf, addr)
+        if not addr_in_ta and addr_in_tf:
+            return True
+        return False
 
     def is_heap_overflow(self, addr):
         # TODO: 完成overflow判断方法
-        pass
+        return False
 
     def malloc(self, size, ret):
         self.heap_repr.allocate(HeapBlock(ret, size))
@@ -286,16 +302,24 @@ class Watcher:
         self.heap_repr.free(addr)
 
     def inst_read(self, addr):
-        # TODO: uaf overflow 分别编写方法
-        self.is_uaf(addr)
-        self.is_heap_overflow(addr)
+        is_uaf = self.is_uaf(addr)
+        is_overflow = self.is_heap_overflow(addr)
+        # TODO: 处理异常事件
+        if is_uaf:
+            pass
+        if is_overflow:
+            pass
 
     def inst_write(self, addr):
-        # TODO: 调用uaf和overflow处理方法
-        self.is_uaf(addr)
-        self.is_heap_overflow(addr)
+        is_uaf = self.is_uaf(addr)
+        is_overflow = self.is_heap_overflow(addr)
+        # TODO: 处理异常事件
+        if is_uaf:
+            pass
+        if is_overflow:
+            pass
 
-    def __init__(self, talloc):
+    def __init__(self, talloc=None):
         # 保存原始talloc数据
         self.talloc = talloc
         # 保存talloc数据的解析结果
@@ -363,21 +387,70 @@ class Watcher:
         return self.status
 
 
+class Reader:
+    '''
+    继承该基类，实现对各种数据源的读取功能
+    '''
+    def has_next(self):
+        raise NotImplementedError
+
+    def next(self):
+        raise NotImplementedError
+
+
+class FileReader(Reader):
+    def __init__(self, lines):
+        self.lines = lines.readlines()
+        self.cursor = 0
+
+    def has_next(self):
+        return self.cursor < len(self.lines)
+
+    def next(self):
+        line = self.lines[self.cursor]
+        self.cursor += 1
+        return line
+
+
 class Worker:
     # TODO: 完成该主类
-    def __init__(self):
-        pass
+    def __init__(self, reader):
+        self.__reader: Reader = reader
+        self.__watcher = Watcher()
+
+    def start(self):
+        while(self.__reader.has_next()):
+            line = self.__reader.next()
+            self.__watcher.watch_line(line)
+        print(self.__watcher.heap_repr)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("talloc", type=argparse.FileType("rb"))
     # parser.add_argument("out", type=argparse.FileType("w"))
+    # parser.add_argument("--header", type=int, default=8,
+    #                     help="size of malloc metadata before user data")
+    # parser.add_argument("--footer", type=int, default=0,
+    #                     help="size of malloc metadata after user data")
+    # parser.add_argument("--round", type=int, default=0x10,
+    #                     help="size of malloc chunks are a multiple of this value")
+    # parser.add_argument("--minsz", type=int, default=0x20,
+    #                     help="size of a malloc chunk is at least this value")
+    # parser.add_argument("--raw", action="store_true",
+    #                     help="disables header, footer, round and minsz")
+
+    # # Some values that work well: 38, 917, 190, 226
+    # parser.add_argument("-s", "--seed", type=int, default=226)
+    # parser.add_argument("-S", "--show-seed", action="store_true")
     args = parser.parse_args()
 
     noerrors = codecs.getreader('utf8')(args.talloc.detach(), errors='ignore')
 
-    watcher = Watcher(noerrors)
-    for tup in watcher.watch():
-        # print(tup)
-        pass
+    fr = FileReader(noerrors)
+    Worker(fr).start()
+
+    # watcher = Watcher(noerrors)
+    # for tup in watcher.watch():
+    # print(tup)
+    # pass
