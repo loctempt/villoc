@@ -5,6 +5,7 @@ import re
 import html
 import random
 import codecs
+import rx
 
 
 class State(list):
@@ -159,6 +160,16 @@ class Marker(Block):
 
     def more_html(self):
         return "unknown"
+
+
+class Worker:
+    # TODO: 添加命令行参数
+    def __init__(self):
+        pass
+    def subscribe(self, observable: rx.Observable):
+        observable.subscribe(
+            # TODO: 完成 on_next
+        )
 
 
 class Misc:
