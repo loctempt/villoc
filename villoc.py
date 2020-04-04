@@ -81,6 +81,7 @@ class Printable():
 
 class Empty(Printable):
     '''展示free释放内存后的空闲空间'''
+    # TODO: 让堆顶的空块也得以显示
     classes = Printable.classes + ["empty"]
 
     def __init__(self, start, end, display=True, **kwargs):
@@ -163,34 +164,142 @@ class Marker(Block):
 
 
 class Worker:
-    def __init__(self,
-                 out,
-                 header=8,
-                 footer=0,
-                 _round=0x10,
-                 minsz=0x20,
-                 raw=False,
-                 seed=226,
-                 show_seed=False
-                 ):
+    def __init__(
+        self,
+        out,
+        header=8,
+        footer=0,
+        round_=0x10,
+        minsz=0x20,
+        raw=False,
+        seed=226,
+        show_seed=False
+    ):
+        self.__out = out
         random.seed(seed)
         if show_seed:
             out.write('<h2>seed: %d</h2>' % seed)
         if raw:
             Block.header, Block.footer, Block.round, Block.minsz = 0, 0, 1, 0
         Block.header, Block.footer, Block.round, Block.minsz = (
-            header, footer, _round, minsz
+            header, footer, round_, minsz
         )
+        self.timeline_repr = TimelineRepr()
 
     def subscribe(self, observable: rx.Observable):
         observable.subscribe(
             # TODO: 完成 on_next
-            on_next=lambda ev: None,
+            on_next=lambda trace: self.timeline_repr.on_next(trace),
             # TODO: 考虑是否需要处理异常
             # on_error=lambda err: print("err: ", err),
-            on_completed=lambda: print("completed")
-
+            on_completed=lambda: Misc.gen_html(
+                self.timeline_repr.get_timeline(), 
+                self.timeline_repr.get_boundaries(), 
+                self.__out
+                )
         )
+
+
+class TimelineRepr:
+
+    def __init__(self):
+        self.__boundaries = set()
+        self.__timeline = [State()]
+        self.__errors = []
+        self.__info = []
+        self.__meta = []
+
+    # FIXME: remove those accumulators, we should do this by keeping
+    # the same state from one loop to the other.
+
+    def get_timeline(self):
+        return self.__timeline
+
+    def get_boundaries(self):
+        return self.__boundaries
+
+    def on_next(self, trace):
+        # print(trace)
+        func = trace[0]
+        variables = trace[1:]
+        try:
+            op = operations[func]
+        except KeyError:
+            return
+
+        state = State(b for b in self.__timeline[-1] if not b.tmp)
+        state.errors.extend(self.__errors)
+        state.info.extend(self.__info)
+        state.meta.extend(self.__meta)
+
+        meta_info = op(state, *variables)
+        if meta_info:
+            # This was not an op but something meta.
+            # Add the info to accumulators and continue.
+            self.__errors.extend(meta_info[0])
+            self.__info.extend(meta_info[1])
+            self.__meta.extend(meta_info[2])
+            return
+
+        # This was an op and not something meta.
+        # Clean accumulators.
+        self.__errors = []
+        self.__info = []
+        self.__meta = []
+
+        # TODO: 暂时直接得到 ret 和 args，用于调试，后续加入判断
+        ret = variables[0]
+        args = variables[1:]
+
+        call = "%s(%s)" % (func, ", ".join("%#x" % a for a in args))
+
+        if ret is None:
+            state.errors.append("%s = <error>" % call)
+        else:
+            state.info.append("%s = %#x" % (call, ret))
+
+        self.__boundaries.update(state.boundaries())
+        self.__timeline.append(state)
+
+    # for func, args, ret in events:
+
+    #     try:
+    #         op = operations[func]
+    #     except KeyError:
+    #         continue
+
+    #     # TODO:以State.tmp作为临时标志？
+    #     state = State(b for b in timeline[-1] if not b.tmp)
+    #     state.errors.extend(errors)
+    #     state.info.extend(info)
+    #     state.meta.extend(meta)
+
+    #     meta_info = op(state, ret, *args)
+    #     if meta_info:
+    #         # This was not an op but something meta.
+    #         # Add the info to accumulators and continue.
+    #         errors.extend(meta_info[0])
+    #         info.extend(meta_info[1])
+    #         meta.extend(meta_info[2])
+    #         continue
+
+    #     # This was an op and not something meta.
+    #     # Clean accumulators.
+    #     errors = []
+    #     info = []
+    #     meta = []
+
+    #     call = "%s(%s)" % (func, ", ".join("%#x" % a for a in args))
+
+    #     if ret is None:
+    #         state.errors.append("%s = <error>" % call)
+    #     else:
+    #         state.info.append("%s = %#x" % (call, ret))
+
+    #     boundaries.update(state.boundaries())
+    #     timeline.append(state)
+
+    # return timeline, boundaries
 
 
 class Misc:
@@ -272,6 +381,8 @@ class Misc:
         anotations = args[1:]
         return ([], ["after: %s, meta=%s" % (msg, anotations)], anotations)
 
+
+
     @staticmethod
     def sanitize(x):
         '''
@@ -322,58 +433,6 @@ class Misc:
             ret = Misc.sanitize(ret)
 
             yield func, args, ret
-
-    @staticmethod
-    def build_timeline(events):
-        # events 是一个迭代器，它迭代出trace中的函数名、参数和返回值。
-        boundaries = set()
-        timeline = [State()]
-        errors = []
-        info = []
-        meta = []
-
-        # FIXME: remove those accumulators, we should do this by keeping
-        # the same state from one loop to the other.
-
-        for func, args, ret in events:
-
-            try:
-                op = operations[func]
-            except KeyError:
-                continue
-
-            # TODO:以State.tmp作为临时标志？
-            state = State(b for b in timeline[-1] if not b.tmp)
-            state.errors.extend(errors)
-            state.info.extend(info)
-            state.meta.extend(meta)
-
-            meta_info = op(state, ret, *args)
-            if meta_info:
-                # This was not an op but something meta.
-                # Add the info to accumulators and continue.
-                errors.extend(meta_info[0])
-                info.extend(meta_info[1])
-                meta.extend(meta_info[2])
-                continue
-
-            # This was an op and not something meta.
-            # Clean accumulators.
-            errors = []
-            info = []
-            meta = []
-
-            call = "%s(%s)" % (func, ", ".join("%#x" % a for a in args))
-
-            if ret is None:
-                state.errors.append("%s = <error>" % call)
-            else:
-                state.info.append("%s = %#x" % (call, ret))
-
-            boundaries.update(state.boundaries())
-            timeline.append(state)
-
-        return timeline, boundaries
 
     @staticmethod
     def random_color(r=200, g=200, b=125):
@@ -582,7 +641,6 @@ class Misc:
 
         out.write('</body>\n')
 
-
 operations = {
     'free': Misc.free,
     'malloc': Misc.malloc,
@@ -629,6 +687,6 @@ if __name__ == '__main__':
         args.header, args.footer, args.round, args.minsz)
 
     noerrors = codecs.getreader('utf8')(args.ltrace.detach(), errors='ignore')
-    timeline, boundaries = Misc.build_timeline(Misc.parse_ltrace(noerrors))
+    # timeline, boundaries = Misc.build_timeline(Misc.parse_ltrace(noerrors))
 
-    Misc.gen_html(timeline, boundaries, args.out)
+    # Misc.gen_html(timeline, boundaries, args.out)

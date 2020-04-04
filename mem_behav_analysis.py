@@ -290,16 +290,16 @@ class Watcher:
         # TODO: 完成overflow判断方法
         return False
 
-    def malloc(self, size, ret):
+    def malloc(self, ret, size):
         self.heap_repr.allocate(HeapBlock(ret, size))
 
-    def calloc(self, nmemb, size, ret):
-        self.malloc(nmemb * size, ret)
+    def calloc(self, ret, nmemb, size):
+        self.malloc(ret, nmemb * size)
 
-    def realloc(self, ptr, size, ret):
+    def realloc(self, ret, ptr, size):
         if ptr:
             self.free(ptr)
-        self.malloc(size, ret)
+        self.malloc(ret, size)
 
     def free(self, addr):
         self.heap_repr.free(addr)
@@ -358,9 +358,9 @@ class Watcher:
             if self.func_call[1] == 'free':
                 _, op, arg = self.func_call
                 self.handle_op(op, Misc.sanitize(arg))
-                self.status.append(self.func_call)
+                # self.status.append(self.func_call)
                 self.func_call = None
-                return (op, Misc.sanitize(arg))
+                return (op, 0,Misc.sanitize(arg))
             else:
                 return ("skip",)
         # 读取函数返回值，与函数调用一并拼接成完整调用事件
@@ -372,17 +372,17 @@ class Watcher:
                 _, op, args = self.func_call
                 args = list(
                     map(lambda arg: Misc.sanitize(arg), args.split(',')))
-                self.handle_op(op, *args, ret)
-                self.status.append((_id, op, *args, ret))
+                self.handle_op(op, ret, *args)
+                # self.status.append((_id, op, ret, *args))
                 self.func_call = None
-                return (op, *args, ret)
+                return (op, ret, *args)
         # 读取指令执行事件
         inst_exec = self.inst_patt.findall(line)
         if len(inst_exec) > 0:
             _id, op, addr = inst_exec[0]
             addr = Misc.sanitize(addr)
             result = self.handle_op(op, addr)
-            self.status.append((_id, op, addr))
+            # self.status.append((_id, op, addr))
             return (op, addr, result)
 
     def watch(self):
