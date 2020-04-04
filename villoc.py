@@ -163,7 +163,6 @@ class Marker(Block):
 
 
 class Worker:
-    # TODO: 添加命令行参数
     def __init__(self,
                  out,
                  header=8,
@@ -182,7 +181,6 @@ class Worker:
         Block.header, Block.footer, Block.round, Block.minsz = (
             header, footer, _round, minsz
         )
-
 
     def subscribe(self, observable: rx.Observable):
         observable.subscribe(
