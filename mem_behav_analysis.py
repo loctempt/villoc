@@ -4,8 +4,8 @@ import sys
 import re
 import argparse
 import codecs
-from villoc import Misc, Worker as VWorker
 import bisect
+from villoc import Misc, Worker as VWorker
 from enum import Enum
 from rx import create, subject, Observable
 
@@ -360,7 +360,7 @@ class Watcher:
                 self.handle_op(op, Misc.sanitize(arg))
                 # self.status.append(self.func_call)
                 self.func_call = None
-                return (op, 0,Misc.sanitize(arg))
+                return (op, 0, Misc.sanitize(arg))
             else:
                 return ("skip",)
         # 读取函数返回值，与函数调用一并拼接成完整调用事件
@@ -445,7 +445,6 @@ class Worker:
                 seed,
                 show_seed
             ),
-            self
         ]
         self.__subject = subject.Subject()
 
@@ -463,15 +462,6 @@ class Worker:
     def register(self):
         for observer in self.__observers:
             observer.subscribe(self.__subject)
-
-    def subscribe(self, observable: Observable):
-        # observable.subscribe(
-        #     on_next=lambda ev: print(ev),
-        #     # TODO: 考虑是否需要处理异常
-        #     # on_error=lambda err: print("err: ", err),
-        #     on_completed=lambda: print("completed")
-        # )
-        pass
 
 
 if __name__ == "__main__":

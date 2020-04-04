@@ -261,46 +261,6 @@ class TimelineRepr:
         self.__boundaries.update(state.boundaries())
         self.__timeline.append(state)
 
-    # for func, args, ret in events:
-
-    #     try:
-    #         op = operations[func]
-    #     except KeyError:
-    #         continue
-
-    #     # TODO:以State.tmp作为临时标志？
-    #     state = State(b for b in timeline[-1] if not b.tmp)
-    #     state.errors.extend(errors)
-    #     state.info.extend(info)
-    #     state.meta.extend(meta)
-
-    #     meta_info = op(state, ret, *args)
-    #     if meta_info:
-    #         # This was not an op but something meta.
-    #         # Add the info to accumulators and continue.
-    #         errors.extend(meta_info[0])
-    #         info.extend(meta_info[1])
-    #         meta.extend(meta_info[2])
-    #         continue
-
-    #     # This was an op and not something meta.
-    #     # Clean accumulators.
-    #     errors = []
-    #     info = []
-    #     meta = []
-
-    #     call = "%s(%s)" % (func, ", ".join("%#x" % a for a in args))
-
-    #     if ret is None:
-    #         state.errors.append("%s = <error>" % call)
-    #     else:
-    #         state.info.append("%s = %#x" % (call, ret))
-
-    #     boundaries.update(state.boundaries())
-    #     timeline.append(state)
-
-    # return timeline, boundaries
-
 
 class Misc:
     '''将先前的全局函数归入该类管理'''
