@@ -350,24 +350,23 @@ class Watcher:
     def watch_line(self, line):
         # TODO: 返回处理结果
         line = line.strip()
-
         # 读取函数调用事件
-        try:
-            self.func_call = self.func_call_patt.findall(line)[0]
-            # 由于free没有返回值，故对其单独处理
+        func_call = self.func_call_patt.findall(line)
+        # 由于free没有返回值，故对其单独处理
+        if len(func_call) > 0:
+            self.func_call = func_call[0]
             if self.func_call[1] == 'free':
                 _, op, arg = self.func_call
                 self.handle_op(op, Misc.sanitize(arg))
                 self.status.append(self.func_call)
                 self.func_call = None
                 return (op, Misc.sanitize(arg))
-            return None
-        except Exception as e:
-            pass
-
+            else:
+                return ("skip",)
         # 读取函数返回值，与函数调用一并拼接成完整调用事件
-        try:
-            _id, ret = self.func_ret_patt.findall(line)[0]
+        func_return = self.func_ret_patt.findall(line)
+        if len(func_return) > 0:
+            _id, ret = func_return[0]
             ret = Misc.sanitize(ret)
             if self.func_call is not None:
                 _, op, args = self.func_call
@@ -377,19 +376,14 @@ class Watcher:
                 self.status.append((_id, op, *args, ret))
                 self.func_call = None
                 return (op, *args, ret)
-        except Exception as e:
-            pass
-
         # 读取指令执行事件
-        try:
-            _id, op, addr = self.inst_patt.findall(line)[0]
+        inst_exec = self.inst_patt.findall(line)
+        if len(inst_exec) > 0:
+            _id, op, addr = inst_exec[0]
             addr = Misc.sanitize(addr)
             result = self.handle_op(op, addr)
             self.status.append((_id, op, addr))
             return (op, addr, result)
-            # return op
-        except Exception as e:
-            pass
 
     def watch(self):
         for line in self.talloc:
