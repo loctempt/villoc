@@ -82,10 +82,10 @@ class HeapRepr:
         self.__tf = []
 
     def get_ta(self):
-        return self.__ta[:]
+        return self.__ta
 
     def get_tf(self):
-        return self.__tf[:]
+        return self.__tf
 
     def __maximized_min_idx(self, lst: list, target_addr: int):
         '''
@@ -426,7 +426,7 @@ class Worker:
         out,
         header=8,
         footer=0,
-        _round=0x10,
+        round_=0x10,
         minsz=0x20,
         raw=False,
         seed=226,
@@ -439,7 +439,7 @@ class Worker:
                 out,
                 header,
                 footer,
-                _round,
+                round_,
                 minsz,
                 raw,
                 seed,
