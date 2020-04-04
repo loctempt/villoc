@@ -4,14 +4,17 @@ import sys
 import re
 import argparse
 import codecs
-from villoc import Misc
+from villoc import Misc, Worker as VWorker
 import bisect
 from enum import Enum
+from rx import create, subject, Observable
 
 
 class InstStat(Enum):
     OK = 0
     ERR = -1
+    UAF = 1
+    OVF = 2
 
 
 class HeapBlock:
@@ -107,13 +110,13 @@ class HeapRepr:
             return None
         return begin
 
-    def is_addr_valid(self, lst: list, addr: int) -> bool:
+    def is_addr_valid(self, lst: list, addr: int) -> HeapBlock:
         '''
         此处的valid意为给定的addr位于某个block之内
         '''
         pos = self.__maximized_min_idx(lst, addr)
         if pos is None:
-            return False
+            return None
         block: HeapBlock = self.__ta[pos]
         # 若pos非空，即已经隐含“addr >= block.start()”这个条件了。
         # 故这里只需判断addr < block.end()
@@ -234,7 +237,7 @@ class HeapRepr:
                 back_block.change_rsize(new_back_block_sz)
             else:
                 self.__tf.remove(back_block)
-        else:
+        elif block in self.__tf:
             self.__tf.remove(block)
 
     def allocate(self, block: HeapBlock):
@@ -275,8 +278,8 @@ class Watcher:
         addr not in ta && addr not in tf -> Invalid memory access;
         addr not in ta && addr in tf -> Use-after-free
         '''
-        ta = self.heap_repr.get_ta
-        tf = self.heap_repr.get_tf
+        ta = self.heap_repr.get_ta()
+        tf = self.heap_repr.get_tf()
         addr_in_ta = self.heap_repr.is_addr_valid(ta, addr)
         addr_in_tf = self.heap_repr.is_addr_valid(tf, addr)
         if not addr_in_ta and addr_in_tf:
@@ -306,18 +309,20 @@ class Watcher:
         is_overflow = self.is_heap_overflow(addr)
         # TODO: 处理异常事件
         if is_uaf:
-            pass
+            return InstStat.UAF
         if is_overflow:
-            pass
+            return InstStat.OVF
+        return InstStat.OK
 
     def inst_write(self, addr):
         is_uaf = self.is_uaf(addr)
         is_overflow = self.is_heap_overflow(addr)
         # TODO: 处理异常事件
         if is_uaf:
-            pass
+            return InstStat.UAF
         if is_overflow:
-            pass
+            return InstStat.OVF
+        return InstStat.OK
 
     def __init__(self, talloc=None):
         # 保存原始talloc数据
@@ -340,9 +345,10 @@ class Watcher:
         if op_str not in self.operations:
             return
         op = self.operations[op_str]
-        op(*etc)
+        return op(*etc)
 
     def watch_line(self, line):
+        # TODO: 返回处理结果
         line = line.strip()
 
         # 读取函数调用事件
@@ -354,7 +360,9 @@ class Watcher:
                 self.handle_op(op, Misc.sanitize(arg))
                 self.status.append(self.func_call)
                 self.func_call = None
-        except:
+                return (op, Misc.sanitize(arg))
+            return None
+        except Exception as e:
             pass
 
         # 读取函数返回值，与函数调用一并拼接成完整调用事件
@@ -368,16 +376,19 @@ class Watcher:
                 self.handle_op(op, *args, ret)
                 self.status.append((_id, op, *args, ret))
                 self.func_call = None
-        except:
+                return (op, *args, ret)
+        except Exception as e:
             pass
 
         # 读取指令执行事件
         try:
             _id, op, addr = self.inst_patt.findall(line)[0]
             addr = Misc.sanitize(addr)
-            self.handle_op(op, addr)
+            result = self.handle_op(op, addr)
             self.status.append((_id, op, addr))
-        except:
+            return (op, addr, result)
+            # return op
+        except Exception as e:
             pass
 
     def watch(self):
@@ -391,6 +402,7 @@ class Reader:
     '''
     继承该基类，实现对各种数据源的读取功能
     '''
+
     def has_next(self):
         raise NotImplementedError
 
@@ -417,12 +429,31 @@ class Worker:
     def __init__(self, reader):
         self.__reader: Reader = reader
         self.__watcher = Watcher()
+        # self.__observers = [VWorker(), self]
+        self.__observers = [self]
+        self.__subject = subject.Subject()
 
     def start(self):
+        self.register()
         while(self.__reader.has_next()):
             line = self.__reader.next()
-            self.__watcher.watch_line(line)
-        print(self.__watcher.heap_repr)
+            try:
+                trace = self.__watcher.watch_line(line)
+                self.__subject.on_next(trace)
+            except Exception as e:
+                self.__subject.on_error(e)
+        self.__subject.on_completed()
+
+    def register(self):
+        for observer in self.__observers:
+            observer.subscribe(self.__subject)
+
+    def subscribe(self, observable: Observable):
+        observable.subscribe(
+            on_next=lambda ev: print(ev),
+            # on_error=lambda err: print("err: ", err),
+            on_completed=lambda: print("completed")
+        )
 
 
 if __name__ == "__main__":
