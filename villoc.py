@@ -164,11 +164,34 @@ class Marker(Block):
 
 class Worker:
     # TODO: 添加命令行参数
-    def __init__(self):
-        pass
+    def __init__(self,
+                 out,
+                 header=8,
+                 footer=0,
+                 _round=0x10,
+                 minsz=0x20,
+                 raw=False,
+                 seed=226,
+                 show_seed=False
+                 ):
+        random.seed(seed)
+        if show_seed:
+            out.write('<h2>seed: %d</h2>' % seed)
+        if raw:
+            Block.header, Block.footer, Block.round, Block.minsz = 0, 0, 1, 0
+        Block.header, Block.footer, Block.round, Block.minsz = (
+            header, footer, _round, minsz
+        )
+
+
     def subscribe(self, observable: rx.Observable):
         observable.subscribe(
             # TODO: 完成 on_next
+            on_next=lambda ev: None,
+            # TODO: 考虑是否需要处理异常
+            # on_error=lambda err: print("err: ", err),
+            on_completed=lambda: print("completed")
+
         )
 
 

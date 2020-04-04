@@ -405,7 +405,8 @@ class Reader:
 
 
 class FileReader(Reader):
-    def __init__(self, lines):
+    def __init__(self, talloc):
+        lines = codecs.getreader('utf8')(talloc, errors='ignore')
         self.lines = lines.readlines()
         self.cursor = 0
 
@@ -420,11 +421,32 @@ class FileReader(Reader):
 
 class Worker:
     # TODO: 完成该主类
-    def __init__(self, reader):
-        self.__reader: Reader = reader
+    def __init__(
+        self, reader: Reader,
+        out,
+        header=8,
+        footer=0,
+        _round=0x10,
+        minsz=0x20,
+        raw=False,
+        seed=226,
+        show_seed=False
+    ):
+        self.__reader = reader
         self.__watcher = Watcher()
-        # self.__observers = [VWorker(), self]
-        self.__observers = [self]
+        self.__observers = [
+            VWorker(
+                out,
+                header,
+                footer,
+                _round,
+                minsz,
+                raw,
+                seed,
+                show_seed
+            ),
+            self
+        ]
         self.__subject = subject.Subject()
 
     def start(self):
@@ -443,38 +465,46 @@ class Worker:
             observer.subscribe(self.__subject)
 
     def subscribe(self, observable: Observable):
-        observable.subscribe(
-            on_next=lambda ev: print(ev),
-            # on_error=lambda err: print("err: ", err),
-            on_completed=lambda: print("completed")
-        )
+        # observable.subscribe(
+        #     on_next=lambda ev: print(ev),
+        #     # TODO: 考虑是否需要处理异常
+        #     # on_error=lambda err: print("err: ", err),
+        #     on_completed=lambda: print("completed")
+        # )
+        pass
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("talloc", type=argparse.FileType("rb"))
-    # parser.add_argument("out", type=argparse.FileType("w"))
-    # parser.add_argument("--header", type=int, default=8,
-    #                     help="size of malloc metadata before user data")
-    # parser.add_argument("--footer", type=int, default=0,
-    #                     help="size of malloc metadata after user data")
-    # parser.add_argument("--round", type=int, default=0x10,
-    #                     help="size of malloc chunks are a multiple of this value")
-    # parser.add_argument("--minsz", type=int, default=0x20,
-    #                     help="size of a malloc chunk is at least this value")
-    # parser.add_argument("--raw", action="store_true",
-    #                     help="disables header, footer, round and minsz")
+    parser.add_argument("out", type=argparse.FileType("w"))
+    parser.add_argument("--header", type=int, default=8,
+                        help="size of malloc metadata before user data")
+    parser.add_argument("--footer", type=int, default=0,
+                        help="size of malloc metadata after user data")
+    parser.add_argument("--round", type=int, default=0x10,
+                        help="size of malloc chunks are a multiple of this value")
+    parser.add_argument("--minsz", type=int, default=0x20,
+                        help="size of a malloc chunk is at least this value")
+    parser.add_argument("--raw", action="store_true",
+                        help="disables header, footer, round and minsz")
 
-    # # Some values that work well: 38, 917, 190, 226
-    # parser.add_argument("-s", "--seed", type=int, default=226)
-    # parser.add_argument("-S", "--show-seed", action="store_true")
+    # Some values that work well: 38, 917, 190, 226
+    parser.add_argument("-s", "--seed", type=int, default=226)
+    parser.add_argument("-S", "--show-seed", action="store_true")
     args = parser.parse_args()
 
-    noerrors = codecs.getreader('utf8')(args.talloc.detach(), errors='ignore')
+    # noerrors = codecs.getreader('utf8')(args.talloc.detach(), errors='ignore')
 
-    fr = FileReader(noerrors)
-    Worker(fr).start()
+    fr = FileReader(args.talloc.detach())
+    Worker(fr,
+           args.out,
+           args.header, args.footer,
+           args.round, args.minsz,
+           args.raw, args.seed, args.show_seed
+           ).start()
 
+    # print(args)
     # watcher = Watcher(noerrors)
     # for tup in watcher.watch():
     # print(tup)
