@@ -110,7 +110,7 @@ class HeapRepr:
         pos = self.__maximized_min_idx(lst, addr)
         if pos is None:
             return None
-        block: HeapBlock = self.__ta[pos]
+        block: HeapBlock = lst[pos]
         # 若pos非空，即已经隐含“addr >= block.start()”这个条件了。
         # 故这里只需判断addr < block.end()
         if addr < block.end():
@@ -349,7 +349,7 @@ class Watcher:
         if len(func_call) > 0:
             self.func_call = func_call[0]
             if self.func_call[1] == 'free':
-                _, op, arg = self.func_call
+                func_id, op, arg = self.func_call
                 self.handle_op(op, Misc.sanitize(arg))
                 # self.status.append(self.func_call)
                 self.func_call = None
@@ -359,10 +359,10 @@ class Watcher:
         # 读取函数返回值，与函数调用一并拼接成完整调用事件
         func_return = self.func_ret_patt.findall(line)
         if len(func_return) > 0:
-            _id, ret = func_return[0]
+            return_id, ret = func_return[0]
             ret = Misc.sanitize(ret)
             if self.func_call is not None:
-                _, op, args = self.func_call
+                func_id, op, args = self.func_call
                 args = list(
                     map(lambda arg: Misc.sanitize(arg), args.split(',')))
                 self.handle_op(op, ret, *args)
@@ -372,7 +372,7 @@ class Watcher:
         # 读取指令执行事件
         inst_exec = self.inst_patt.findall(line)
         if len(inst_exec) > 0:
-            _id, op, addr = inst_exec[0]
+            inst_id, op, addr = inst_exec[0]
             addr = Misc.sanitize(addr)
             result = self.handle_op(op, addr)
             # self.status.append((_id, op, addr))
