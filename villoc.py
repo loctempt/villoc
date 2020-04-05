@@ -6,7 +6,9 @@ import html
 import random
 import codecs
 import rx
+import copy
 from enumerations import InstStat
+
 
 class State(list):
     '''该类实际上是一个list of Blocks'''
@@ -110,7 +112,6 @@ class Block(Printable):
     round = 0x10
     minsz = 0x20
 
-    classes = Printable.classes + ["normal"]
 
     def __init__(self, addr, size, error=False, tmp=False, **kwargs):
         self.color = kwargs.pop('color', Misc.random_color())
@@ -119,6 +120,7 @@ class Block(Printable):
         self.details = True
         self.error = error
         self.tmp = tmp
+        self.classes = Printable.classes + ["normal"]
         super().__init__(**kwargs)
 
     def start(self):
@@ -193,10 +195,10 @@ class Worker:
             # TODO: 考虑是否需要处理异常
             # on_error=lambda err: print("err: ", err),
             on_completed=lambda: Misc.gen_html(
-                self.timeline_repr.get_timeline(), 
-                self.timeline_repr.get_boundaries(), 
+                self.timeline_repr.get_timeline(),
+                self.timeline_repr.get_boundaries(),
                 self.__out
-                )
+            )
         )
 
 
@@ -217,6 +219,11 @@ class TimelineRepr:
     def get_boundaries(self):
         return self.__boundaries
 
+    def clean_class_current(self, state):
+        for b in state:
+            if "current" in b.classes:
+                b.classes.remove("current")
+
     def on_next(self, trace):
         # print(trace)
         func = trace[0]
@@ -230,7 +237,9 @@ class TimelineRepr:
                     print(trace)
             return
 
-        state = State(b for b in self.__timeline[-1] if not b.tmp)
+        old_state = State(b for b in self.__timeline[-1] if not b.tmp)
+        state = copy.deepcopy(old_state)
+        self.clean_class_current(state)
         state.errors.extend(self.__errors)
         state.info.extend(self.__info)
         state.meta.extend(self.__meta)
@@ -297,27 +306,12 @@ class Misc:
             state.errors.append("Failed to allocate %#x bytes." % size)
         else:
             state.append(Block(ret, size))
+            state[-1].classes.append("current")
+            pass
 
     @staticmethod
     def calloc(state, ret, nmemb, size):
         Misc.malloc(state, ret, nmemb * size)
-
-    @staticmethod
-    def free(state, ret, ptr):
-
-        if ptr is 0:
-            return
-
-        s, match = Misc.match_ptr(state, ptr)
-
-        if match is None:
-            return
-        elif ret is None:
-            state[s] = Block(
-                match.uaddr, match.usize, error=True, color=match.color
-            )
-        else:
-            del state[s]
 
     @staticmethod
     def realloc(state, ret, ptr, size):
@@ -337,14 +331,30 @@ class Misc:
             state[s].error = True
         else:
             state[s] = Block(ret, size, color=match.color, meta=match.meta)
+        state[s].classes.append("current")
+
+    @staticmethod
+    def free(state, ret, ptr):
+
+        if ptr is 0:
+            return
+
+        s, match = Misc.match_ptr(state, ptr)
+
+        if match is None:
+            return
+        elif ret is None:
+            state[s] = Block(
+                match.uaddr, match.usize, error=True, color=match.color
+            )
+        else:
+            del state[s]
 
     @staticmethod
     def meta(state, ret, *args):
         msg = args[0]
         anotations = args[1:]
         return ([], ["after: %s, meta=%s" % (msg, anotations)], anotations)
-
-
 
     @staticmethod
     def sanitize(x):
@@ -603,6 +613,7 @@ class Misc:
         out.write('</div>\n')
 
         out.write('</body>\n')
+
 
 operations = {
     'free': Misc.free,
