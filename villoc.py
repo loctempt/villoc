@@ -6,7 +6,7 @@ import html
 import random
 import codecs
 import rx
-
+from enumerations import InstStat
 
 class State(list):
     '''该类实际上是一个list of Blocks'''
@@ -201,7 +201,6 @@ class Worker:
 
 
 class TimelineRepr:
-
     def __init__(self):
         self.__boundaries = set()
         self.__timeline = [State()]
@@ -225,6 +224,10 @@ class TimelineRepr:
         try:
             op = operations[func]
         except KeyError:
+            if func == 'r' or func == 'w':
+                status = trace[-1]
+                if status != InstStat.OK:
+                    print(trace)
             return
 
         state = State(b for b in self.__timeline[-1] if not b.tmp)

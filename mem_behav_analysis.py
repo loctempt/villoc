@@ -6,15 +6,8 @@ import argparse
 import codecs
 import bisect
 from villoc import Misc, Worker as VWorker
-from enum import Enum
 from rx import create, subject, Observable
-
-
-class InstStat(Enum):
-    OK = 0
-    ERR = -1
-    UAF = 1
-    OVF = 2
+from enumerations import InstStat
 
 
 class HeapBlock:
