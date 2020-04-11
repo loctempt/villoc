@@ -10,6 +10,52 @@ from rx import create, subject, Observable
 from enumerations import InstStat
 
 
+class SeqRW:
+    '''
+    SeqRW for Sequential Read and Write
+    用于标记连续的读写指令信息
+    '''
+
+    def __init__(self):
+        self.__new_seq = True
+        self.__type = None
+        self.__base = -1
+        self.__size = 0
+
+    def __do_update(self, type_, addr, size):
+        self.__type = type_
+        self.__base = addr
+        self.__size = size
+
+    def is_new_seq(self) -> bool:
+        return self.__new_seq
+
+    def get_type(self) -> str:
+        return self.__type
+
+    def get_base(self) -> int:
+        return self.__base
+
+    def get_size(self) -> int:
+        return self.__size
+
+    def end(self):
+        return self.__base + self.__size
+
+    def update(self, type_, addr, size) -> bool:
+        if type_ != self.__type:
+            self.__do_update(type_, addr, size)
+            self.__new_seq = True
+            return True
+        if self.__base + self.__size == addr:
+            self.__do_update(self.__type, self.__base, self.__size + size)
+            self.__new_seq = False
+            return False
+        self.__do_update(self.__type, addr, size)
+        self.__new_seq = True
+        return True
+
+
 class HeapBlock:
     '''
     用于表示堆块
@@ -128,7 +174,7 @@ class HeapRepr:
             return None
         next_block = self.__tf[next_idx]
         # “后一个堆块”实际上位于当前堆块之前，不需向后合并
-        if next_block.begin() != block.end():
+        if next_block.start() != block.end():
             return None
         return next_idx
 
@@ -263,7 +309,7 @@ class HeapRepr:
 class Watcher:
     func_call_patt = re.compile(r"^(\d+)\s*([A-z_]+)\((.*)\)$")
     func_ret_patt = re.compile(r"^(\d+)\s*returns: (.+)$")
-    inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+)$")
+    inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+) (.+)$")
 
     def is_uaf(self, addr):
         '''
@@ -279,8 +325,19 @@ class Watcher:
             return True
         return False
 
-    def is_heap_overflow(self, addr):
-        # TODO: 完成overflow判断方法
+    def is_heap_overflow(self, addr, size):
+        is_new_seq = self.srw.is_new_seq()
+        base_addr = -1
+        if is_new_seq:
+            base_addr = addr
+        else:
+            base_addr = self.srw.get_base()
+        ta = self.heap_repr.get_ta()
+        block = self.heap_repr.is_addr_valid(ta, base_addr)
+        if not block:
+            return False
+        if self.srw.end() > block.end():
+            return True
         return False
 
     def malloc(self, ret, size):
@@ -297,25 +354,25 @@ class Watcher:
     def free(self, addr):
         self.heap_repr.free(addr)
 
-    def inst_read(self, addr):
+    def inst_read(self, addr, size):
+        self.srw.update('r', addr, size)
         is_uaf = self.is_uaf(addr)
-        is_overflow = self.is_heap_overflow(addr)
-        # TODO: 处理异常事件
+        # is_overflow = self.is_heap_overflow(addr, size)
         if is_uaf:
-            return InstStat.UAF
-        if is_overflow:
-            return InstStat.OVF
-        return InstStat.OK
+            return (InstStat.UAF, self.srw.get_base(), self.srw.get_size())
+        # if is_overflow:
+        #     return InstStat.OVF
+        return (InstStat.OK,)
 
-    def inst_write(self, addr):
+    def inst_write(self, addr, size):
+        self.srw.update('w', addr, size)
         is_uaf = self.is_uaf(addr)
-        is_overflow = self.is_heap_overflow(addr)
-        # TODO: 处理异常事件
+        is_overflow = self.is_heap_overflow(addr, size)
         if is_uaf:
-            return InstStat.UAF
+            return (InstStat.UAF, self.srw.get_base(), self.srw.get_size())
         if is_overflow:
-            return InstStat.OVF
-        return InstStat.OK
+            return (InstStat.OVF, self.srw.get_base(), self.srw.get_size())
+        return (InstStat.OK,)
 
     def __init__(self, talloc=None):
         # 保存原始talloc数据
@@ -333,6 +390,7 @@ class Watcher:
             'r': self.inst_read,
             'w': self.inst_write
         }
+        self.srw = SeqRW()
 
     def handle_op(self, op_str, *etc):
         if op_str not in self.operations:
@@ -341,7 +399,6 @@ class Watcher:
         return op(*etc)
 
     def watch_line(self, line):
-        # TODO: 返回处理结果
         line = line.strip()
         # 读取函数调用事件
         func_call = self.func_call_patt.findall(line)
@@ -372,11 +429,13 @@ class Watcher:
         # 读取指令执行事件
         inst_exec = self.inst_patt.findall(line)
         if len(inst_exec) > 0:
-            inst_id, op, addr = inst_exec[0]
+            inst_id, op, addr, size = inst_exec[0]
             addr = Misc.sanitize(addr)
-            result = self.handle_op(op, addr)
+            size = Misc.sanitize(size)
+            result = self.handle_op(op, addr, size)
             # self.status.append((_id, op, addr))
-            return (op, addr, result)
+            # TODO: result需要携带更多信息，例如溢出时需要携带溢出长度、溢出操作起点
+            return (op, addr, size, result)
 
     def watch(self):
         for line in self.talloc:
@@ -413,7 +472,6 @@ class FileReader(Reader):
 
 
 class Worker:
-    # TODO: 完成该主类
     def __init__(
         self, reader: Reader,
         out,
@@ -427,18 +485,19 @@ class Worker:
     ):
         self.__reader = reader
         self.__watcher = Watcher()
-        self.__observers = [
-            VWorker(
-                out,
-                header,
-                footer,
-                round_,
-                minsz,
-                raw,
-                seed,
-                show_seed
-            ),
-        ]
+        # self.__observers = [
+        #     VWorker(
+        #         out,
+        #         header,
+        #         footer,
+        #         round_,
+        #         minsz,
+        #         raw,
+        #         seed,
+        #         show_seed
+        #     ),
+        # ]
+        self.__observers = [self]
         self.__subject = subject.Subject()
 
     def start(self):
@@ -455,6 +514,11 @@ class Worker:
     def register(self):
         for observer in self.__observers:
             observer.subscribe(self.__subject)
+
+    def subscribe(self, observable: Observable):
+        observable.subscribe(
+            on_next=lambda trace: print(trace)
+        )
 
 
 if __name__ == "__main__":
