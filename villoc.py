@@ -112,7 +112,6 @@ class Block(Printable):
     round = 0x10
     minsz = 0x20
 
-
     def __init__(self, addr, size, error=False, tmp=False, **kwargs):
         self.color = kwargs.pop('color', Misc.random_color())
         self.uaddr = addr
@@ -527,6 +526,12 @@ class Misc:
     padding: 0.5em 0;
     text-align: center;
     color: black;
+    }
+    ''')
+
+        out.write('''.current {
+    margin: -3px;
+    border: 3px dashed;
     }
     ''')
 
