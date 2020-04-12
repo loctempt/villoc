@@ -83,7 +83,6 @@ class Printable():
 
 class Empty(Printable):
     '''展示free释放内存后的空闲空间'''
-    # TODO: 让堆顶的空块也得以显示
     classes = Printable.classes + ["empty"]
 
     def __init__(self, start, end, display=True, **kwargs):
@@ -220,7 +219,7 @@ class MemoryStateStash:
             type_, base, size
 
     def clear(self):
-        self.__do_update(None, -1, -1)       
+        self.__do_update(None, -1, -1)
 
     def get_prev_state(self):
         return self.prev_type, self.prev_base, self.prev_size
@@ -242,6 +241,7 @@ class MemoryStateStash:
         else:
             self.__do_update(self.type, self.base, size)
             return False
+
 
 class TimelineRepr:
     def __init__(self):
@@ -312,6 +312,11 @@ class TimelineRepr:
         self.__boundaries.update(state.boundaries())
         self.__timeline.append(state)
 
+    def append_memory_state_info(self, e_type, base, size):
+        state = self.__timeline[-1]
+        state.info.append(
+            "{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
+
     def handle_inst(self, inst, variables: tuple):
         '''
         variables格式：
@@ -322,15 +327,18 @@ class TimelineRepr:
         memory_state_updated = self.__memory_state_stash.update(*variables)
         if memory_state_updated:
             e_type, base, size = self.__memory_state_stash.get_prev_state()
-            state = self.__timeline[-1]
-            state.info.append("{} base:{:#x} size:{:#x}".format(e_type.value, base, size))
-        
+            self.append_memory_state_info(e_type, base, size)
+            # state = self.__timeline[-1]
+            # state.info.append("{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
+
     def flush_memory_state(self):
-        e_type,base,size = self.__memory_state_stash.get_curr_state()
+        e_type, base, size = self.__memory_state_stash.get_curr_state()
         if e_type is None:
             return
-        state = self.__timeline[-1]
-        state.info.append("{} base:{:#x} size:{:#x}".format(e_type.value, base, size))
+        self.append_memory_state_info(e_type, base, size)
+        # state = self.__timeline[-1]
+        # state.info.append(
+        #     "{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
 
     def on_completed(self):
         self.flush_memory_state()
