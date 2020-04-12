@@ -481,24 +481,29 @@ class Worker:
         minsz=0x20,
         raw=False,
         seed=226,
-        show_seed=False
+        show_seed=False,
+        debug=False
     ):
         self.__reader = reader
         self.__watcher = Watcher()
-        # self.__observers = [
-        #     VWorker(
-        #         out,
-        #         header,
-        #         footer,
-        #         round_,
-        #         minsz,
-        #         raw,
-        #         seed,
-        #         show_seed
-        #     ),
-        # ]
-        self.__observers = [self]
         self.__subject = subject.Subject()
+        if not debug:
+            self.__observers = [
+                VWorker(
+                    out,
+                    header,
+                    footer,
+                    round_,
+                    minsz,
+                    raw,
+                    seed,
+                    show_seed
+                ),
+            ]
+            return
+
+        #=========== debug env ==============
+        self.__observers = [self]
 
     def start(self):
         self.register()
@@ -535,6 +540,7 @@ if __name__ == "__main__":
                         help="size of a malloc chunk is at least this value")
     parser.add_argument("--raw", action="store_true",
                         help="disables header, footer, round and minsz")
+    parser.add_argument("--debug", action="store_true")
 
     # Some values that work well: 38, 917, 190, 226
     parser.add_argument("-s", "--seed", type=int, default=226)
@@ -548,7 +554,8 @@ if __name__ == "__main__":
            args.out,
            args.header, args.footer,
            args.round, args.minsz,
-           args.raw, args.seed, args.show_seed
+           args.raw, args.seed, args.show_seed,
+           args.debug
            ).start()
 
     # print(args)
