@@ -187,19 +187,61 @@ class Worker:
         )
         self.timeline_repr = TimelineRepr()
 
+    def on_completed(self):
+        self.timeline_repr.on_completed()
+        Misc.gen_html(
+            self.timeline_repr.get_timeline(),
+            self.timeline_repr.get_boundaries(),
+            self.__out
+        )
+
     def subscribe(self, observable: rx.Observable):
         observable.subscribe(
-            # TODO: 完成 on_next
             on_next=lambda trace: self.timeline_repr.on_next(trace),
             # TODO: 考虑是否需要处理异常
             # on_error=lambda err: print("err: ", err),
-            on_completed=lambda: Misc.gen_html(
-                self.timeline_repr.get_timeline(),
-                self.timeline_repr.get_boundaries(),
-                self.__out
-            )
+            on_completed=lambda: self.on_completed()
         )
 
+
+class MemoryStateStash:
+    def __init__(self):
+        self.type = None
+        self.base = -1
+        self.size = -1
+        self.prev_type = None
+        self.prev_base = -1
+        self.prev_size = -1
+
+    def __do_update(self, type_, base, size):
+        self.prev_type, self.prev_base, self.prev_size = \
+            self.type, self.base, self.size
+        self.type, self.base, self.size = \
+            type_, base, size
+
+    def clear(self):
+        self.__do_update(None, -1, -1)       
+
+    def get_prev_state(self):
+        return self.prev_type, self.prev_base, self.prev_size
+
+    def get_curr_state(self):
+        return self.type, self.base, self.size
+
+    def update(self, type_, base, size) -> bool:
+        '''
+        base或type发生变化：返回True
+        base及type未变化：返回False
+        '''
+        if self.type is None:
+            self.__do_update(type_, base, size)
+            return False
+        if type_ != self.type or base != self.base:
+            self.__do_update(type_, base, size)
+            return True
+        else:
+            self.__do_update(self.type, self.base, size)
+            return False
 
 class TimelineRepr:
     def __init__(self):
@@ -208,6 +250,7 @@ class TimelineRepr:
         self.__errors = []
         self.__info = []
         self.__meta = []
+        self.__memory_state_stash = MemoryStateStash()
 
     # FIXME: remove those accumulators, we should do this by keeping
     # the same state from one loop to the other.
@@ -223,27 +266,24 @@ class TimelineRepr:
             if "current" in b.classes:
                 b.classes.remove("current")
 
-    def on_next(self, trace):
-        # print(trace)
-        func = trace[0]
-        variables = trace[1:]
-        try:
-            op = operations[func]
-        except KeyError:
-            if func == 'r' or func == 'w':
-                status = trace[-1]
-                if status != InstStat.OK:
-                    print(trace)
-            return
+    def is_op_func(self, op):
+        return op in operations
 
+    def handle_func(self, func, variables):
+        '''
+        variables格式：
+        ret, *args
+        '''
+        op_handler = operations[func]
         old_state = State(b for b in self.__timeline[-1] if not b.tmp)
+        # 深拷贝state，避免current标签被覆盖
         state = copy.deepcopy(old_state)
         self.clean_class_current(state)
         state.errors.extend(self.__errors)
         state.info.extend(self.__info)
         state.meta.extend(self.__meta)
 
-        meta_info = op(state, *variables)
+        meta_info = op_handler(state, *variables)
         if meta_info:
             # This was not an op but something meta.
             # Add the info to accumulators and continue.
@@ -271,6 +311,42 @@ class TimelineRepr:
 
         self.__boundaries.update(state.boundaries())
         self.__timeline.append(state)
+
+    def handle_inst(self, inst, variables: tuple):
+        '''
+        variables格式：
+        (InstStat, [<base>, <size>])
+        '''
+        if variables[0] == InstStat.OK:
+            return
+        memory_state_updated = self.__memory_state_stash.update(*variables)
+        if memory_state_updated:
+            e_type, base, size = self.__memory_state_stash.get_prev_state()
+            state = self.__timeline[-1]
+            state.info.append("{} base:{:#x} size:{:#x}".format(e_type.value, base, size))
+        
+    def flush_memory_state(self):
+        e_type,base,size = self.__memory_state_stash.get_curr_state()
+        if e_type is None:
+            return
+        state = self.__timeline[-1]
+        state.info.append("{} base:{:#x} size:{:#x}".format(e_type.value, base, size))
+
+    def on_completed(self):
+        self.flush_memory_state()
+
+    def on_next(self, trace):
+        # print(trace)
+        op = trace[0]
+        if op == 'skip':
+            return
+        variables = trace[1:]
+        if self.is_op_func(op):
+            self.flush_memory_state()
+            self.handle_func(op, variables)
+            self.__memory_state_stash.clear()
+        else:
+            self.handle_inst(op, variables)
 
 
 class Misc:

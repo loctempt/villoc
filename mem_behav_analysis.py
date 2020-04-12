@@ -435,7 +435,7 @@ class Watcher:
             result = self.handle_op(op, addr, size)
             # self.status.append((_id, op, addr))
             # TODO: result需要携带更多信息，例如溢出时需要携带溢出长度、溢出操作起点
-            return (op, addr, size, result)
+            return (op, *result)
 
     def watch(self):
         for line in self.talloc:
