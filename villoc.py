@@ -17,6 +17,8 @@ class State(list):
         self.errors = []
         self.info = []
         self.meta = []
+        # 保存内存异常操作中的基址列表，用于输出时将异常显示到堆块中
+        self.memory_states = []
         super().__init__(*args, **kwargs)
 
     def append(self, block):
@@ -89,6 +91,7 @@ class Empty(Printable):
         self._start = start
         self._end = end
         self.details = display
+        self.memory_states = None
         super().__init__(**kwargs)
 
     def start(self):
@@ -100,8 +103,22 @@ class Empty(Printable):
     def set_end(self, end):
         self._end = end
 
+    def gen_html(self, out, width, memory_states=None):
+        self.memory_states = memory_states
+        super().gen_html(out, width)
+
     def more_html(self):
-        return "+ %#x" % (self.end() - self.start())
+        m_html = "+ %#x" % (self.end() - self.start())
+        if self.memory_states is None:
+            return m_html
+
+        m_states = ""
+        for memory_state in self.memory_states:
+            e_type, base, _ = memory_state
+            if self.start() > base or self.end() <= base:
+                continue
+            m_states += "<br/>{}".format(e_type.value)
+        return m_html + m_states
 
 
 class Block(Printable):
@@ -119,6 +136,7 @@ class Block(Printable):
         self.error = error
         self.tmp = tmp
         self.classes = Printable.classes + ["normal"]
+        self.memory_states = None
         super().__init__(**kwargs)
 
     def start(self):
@@ -132,7 +150,8 @@ class Block(Printable):
         rsize = rsize - (rsize % self.round)
         return self.uaddr - self.header + rsize
 
-    def gen_html(self, out, width):
+    def gen_html(self, out, width, memory_states=None):
+        self.memory_states = memory_states
 
         if self.color:
             color = ("background-color: rgb(%d, %d, %d);" % self.color)
@@ -147,7 +166,17 @@ class Block(Printable):
         super().gen_html(out, width, color)
 
     def more_html(self):
-        return "+ %#x (%#x)" % (self.end() - self.start(), self.usize)
+        m_html = "+ %#x (%#x)" % (self.end() - self.start(), self.usize)
+        if self.memory_states is None:
+            return m_html
+
+        m_states = ""
+        for memory_state in self.memory_states:
+            e_type, base, _ = memory_state
+            if self.start() > base or self.end() <= base:
+                continue
+            m_states += "<br/>{}".format(e_type.value)
+        return m_html + m_states
 
     def __repr__(self):
         return "%s(start=%#x, end=%#x, tmp=%s, meta=%s)" % (
@@ -314,8 +343,9 @@ class TimelineRepr:
 
     def append_memory_state_info(self, e_type, base, size):
         state = self.__timeline[-1]
-        state.info.append(
-            "{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
+        state.memory_states.append((e_type, base, size))
+        # state.info.append(
+        #     "{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
 
     def handle_inst(self, inst, variables: tuple):
         '''
@@ -529,7 +559,7 @@ class Misc:
 
                 if current:  # stops here.
                     known_stops.add(i)
-                    current.gen_html(out, i - last)
+                    current.gen_html(out, i - last, state.memory_states)
                     done.append(current)
                     last = i
 
@@ -551,11 +581,11 @@ class Misc:
 
                     if s != last:
                         Empty(boundaries[last], boundaries[s],
-                              display=False).gen_html(out, s - last)
+                              display=False).gen_html(out, s - last, state.memory_states)
                         known_stops.add(s)
 
                     if s != i:
-                        Empty(boundaries[s], b).gen_html(out, i - s)
+                        Empty(boundaries[s], b).gen_html(out, i - s, state.memory_states)
                         known_stops.add(i)
 
                     last = i
@@ -574,6 +604,11 @@ class Misc:
 
         for msg in state.info:
             out.write('<p>%s</p>' % html.escape(str(msg)))
+        # 将异常信息显示在state的空白处
+        for memory_state in state.memory_states:
+            e_type, base, size = memory_state
+            out.write(
+                "<p>{} -- base:{:#x} size:{:#x}</p>".format(e_type.value, base, size))
 
         for msg in state.errors:
             out.write('<p>%s</p>' % html.escape(str(msg)))
