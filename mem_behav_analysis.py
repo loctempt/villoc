@@ -307,9 +307,6 @@ class HeapRepr:
 
 
 class Watcher:
-    func_call_patt = re.compile(r"^(\d+)\s*([A-z_]+)\((.*)\)$")
-    func_ret_patt = re.compile(r"^(\d+)\s*returns: (.+)$")
-    inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+) (.+)$")
 
     def is_uaf(self, addr):
         '''
@@ -397,6 +394,10 @@ class Watcher:
             return
         op = self.operations[op_str]
         return op(*etc)
+
+    func_call_patt = re.compile(r"^(\d+)\s*([A-z_]+)\((.*)\)$")
+    func_ret_patt = re.compile(r"^(\d+)\s*returns: (.+)$")
+    inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+) (.+)$")
 
     def watch_line(self, line):
         line = line.strip()
@@ -502,7 +503,7 @@ class Worker:
             ]
             return
 
-        #=========== debug env ==============
+        # =========== debug env ==============
         self.__observers = [self]
 
     def start(self):
@@ -545,6 +546,7 @@ if __name__ == "__main__":
     # Some values that work well: 38, 917, 190, 226
     parser.add_argument("-s", "--seed", type=int, default=226)
     parser.add_argument("-S", "--show-seed", action="store_true")
+    parser.add_argument("--ia32", action="store_true")  # TODO: 添加一个32位开关方便使用
     args = parser.parse_args()
 
     # noerrors = codecs.getreader('utf8')(args.talloc.detach(), errors='ignore')
