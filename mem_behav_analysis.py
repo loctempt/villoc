@@ -359,6 +359,7 @@ class Watcher:
             return (InstStat.UAF, self.srw.get_base(), self.srw.get_size())
         # if is_overflow:
         #     return InstStat.OVF
+        # TODO： 正常情况下也要返回去抖序列，便于villoc装箱
         return (InstStat.OK,)
 
     def inst_write(self, addr, size):
@@ -369,6 +370,7 @@ class Watcher:
             return (InstStat.UAF, self.srw.get_base(), self.srw.get_size())
         if is_overflow:
             return (InstStat.OVF, self.srw.get_base(), self.srw.get_size())
+        # TODO: 正常情况下也要返回去抖序列，便于villoc装箱
         return (InstStat.OK,)
 
     def __init__(self, talloc=None):
@@ -388,6 +390,8 @@ class Watcher:
             'w': self.inst_write
         }
         self.srw = SeqRW()
+        self.critical_depth = None
+        self.critical_value = None
 
     def handle_op(self, op_str, *etc):
         if op_str not in self.operations:
@@ -395,8 +399,8 @@ class Watcher:
         op = self.operations[op_str]
         return op(*etc)
 
-    func_call_patt = re.compile(r"^(\d+)\s*([A-z_]+)\((.*)\)$")
-    func_ret_patt = re.compile(r"^(\d+)\s*returns: (.+)$")
+    func_call_patt = re.compile(r"^(\d+)\s*(\d+)?\s*([A-z_]+)\((.*)\)$")
+    func_ret_patt = re.compile(r"^(\d+)\s*(\d+)?\s*returns: (.+)$")
     inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+) (.+)$")
 
     def watch_line(self, line):
@@ -406,21 +410,26 @@ class Watcher:
         # 由于free没有返回值，故对其单独处理
         if len(func_call) > 0:
             self.func_call = func_call[0]
-            if self.func_call[1] == 'free':
-                func_id, op, arg = self.func_call
-                self.handle_op(op, Misc.sanitize(arg))
-                # self.status.append(self.func_call)
+            if self.func_call[2] == 'free':
+                _, depth, op, arg = self.func_call
+                depth = int(depth)
+                ret = ("skip",)
+                print((self.critical_depth is not None and self.critical_depth+1 == depth and self.critical_value == arg))
+                if not(self.critical_depth is not None and self.critical_depth+1 == depth and self.critical_value == arg):
+                    self.handle_op(op, Misc.sanitize(arg))
+                    ret = (op, 0, Misc.sanitize(arg))
+                self.critical_depth, self.critical_value = depth, arg
                 self.func_call = None
-                return (op, 0, Misc.sanitize(arg))
+                return ret
             else:
                 return ("skip",)
         # 读取函数返回值，与函数调用一并拼接成完整调用事件
         func_return = self.func_ret_patt.findall(line)
         if len(func_return) > 0:
-            return_id, ret = func_return[0]
+            _, __, ret = func_return[0]
             ret = Misc.sanitize(ret)
             if self.func_call is not None:
-                func_id, op, args = self.func_call
+                _, __, op, args = self.func_call
                 args = list(
                     map(lambda arg: Misc.sanitize(arg), args.split(',')))
                 self.handle_op(op, ret, *args)
@@ -430,7 +439,7 @@ class Watcher:
         # 读取指令执行事件
         inst_exec = self.inst_patt.findall(line)
         if len(inst_exec) > 0:
-            inst_id, op, addr, size = inst_exec[0]
+            _, op, addr, size = inst_exec[0]
             addr = Misc.sanitize(addr)
             size = Misc.sanitize(size)
             result = self.handle_op(op, addr, size)
