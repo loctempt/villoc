@@ -7,7 +7,7 @@ import codecs
 import bisect
 from villoc import Misc, Worker as VWorker
 from rx import create, subject, Observable
-from enumerations import InstStat
+from enumerations import *
 
 
 class SeqRW:
@@ -306,9 +306,158 @@ class HeapRepr:
             str(list(map(lambda item: str(item), self.__tf)))
 
 
+class UaddrRepr:
+    def __init__(self, stat=UaddrStat.INIT):
+        self.stat = stat
+        self.refs = []
+
+    def appendRef(self, ref):
+        self.refs.append(ref)
+
+    def removeRef(self, ref):
+        self.refs.remove(ref)
+
+class PointerRepr:
+    def __init__(self, pointerRepr=None, point_to=None, stat=None):
+        if pointerRepr is None and point_to is not None and stat is not None:
+            self.point_to = point_to
+            self.stat = stat
+        elif pointerRepr is not None and point_to is None and stat is None:
+            self.point_to = pointerRepr.point_to
+            self.stat = pointerRepr.stat
+        else:
+            print('PointerRepr: init failed')
+
+
+class TaintTracer:
+    def __init__(self):
+        self.tainted_regs = {}
+        self.uaddr_pool = {}
+        self.pointer_pool = {}
+
+    def __wash_reg(self, reg):
+        if reg in self.tainted_regs:
+            self.tainted_regs.pop(reg)
+
+    def __wash_pointer(self, pointer_addr):
+        if pointer_addr not in self.pointer_pool:
+            return
+        uaddr = self.pointer_pool[pointer_addr].point_to
+        self.uaddr_pool[uaddr].removeRef(pointer_addr)
+        self.pointer_pool.pop(pointer_addr)
+
+    def __wash(self, pointer_addr):
+        if type(pointer_addr) is int:
+            self.__wash_pointer(pointer_addr)
+        else:
+            self.__wash_reg(pointer_addr)
+
+    def __taint_pointer(self, pointer_addr, pointer_repr: PointerRepr):
+        pr = PointerRepr(pointer_repr)
+        self.pointer_pool[pointer_addr] = pr
+        uaddr = pr.point_to
+        self.uaddr_pool[uaddr].appendRef(pr)
+
+    def __taint_reg(self, reg, pointer_repr: PointerRepr):
+        self.tainted_regs[reg] = pointer_repr
+
+    def __taint(self, addr, pointer_repr: PointerRepr):
+        if type(addr) is int:
+            self.__taint_pointer(addr, pointer_repr)
+        else:
+            self.__taint_reg(addr, pointer_repr)
+
+    def __get_reg_taint(self, reg):
+        if reg not in self.tainted_regs:
+            return None
+        return self.tainted_regs[reg]
+
+    def __get_pointer_taint(self, pointer_addr):
+        if pointer_addr not in self.pointer_pool:
+            return None
+        return self.pointer_pool[pointer_addr]
+
+    def __get_taint(self, pointer_addr):
+        if type(pointer_addr) is int:
+            return self.__get_pointer_taint(pointer_addr)
+        else:
+            return self.__get_reg_taint(pointer_addr)
+
+    def __is_dangling_reg(self, reg):
+        if self.is_reg_tainted(reg):
+            return self.tainted_regs[reg].stat == PointerStat.DANGLING
+        return False
+
+    def is_dangling_pointer(self, pointer_addr):
+        '''
+        检查pointer_addr对应的指针是否是悬空指针。
+        亦可传入reg，其名称就被视为寄存器的地址。
+        '''
+        if type(pointer_addr) is not int:
+            return self.__is_dangling_reg(pointer_addr)
+        if pointer_addr in self.pointer_pool:
+            return self.pointer_pool[pointer_addr].stat == PointerStat.DANGLING
+        return False
+
+    def is_reg_tainted(self, reg):
+        return reg in self.tainted_regs
+
+    def is_init_assignment(self, reg_val):
+        '''
+        检查reg_val是否是一个uaddr，并且处于INIT状态
+        '''
+        if reg_val not in self.uaddr_pool:
+            return False
+        return self.uaddr_pool[reg_val].stat == UaddrStat.INIT
+
+    # 在free时调用
+    def on_free(self, uaddr):
+        uaddr_repr: UaddrRepr = self.uaddr_pool[uaddr]
+        for pointerRepr in uaddr_repr.refs:
+            pointerRepr.stat = PointerStat.DANGLING
+        self.uaddr_pool.pop(uaddr)
+
+    # 在malloc时调用
+    def on_allocate(self, uaddr):
+        self.uaddr_pool[uaddr] = UaddrRepr(UaddrStat.INIT)
+
+    def update_reg(self, pointer_addr, reg, reg_val):
+        '''
+        处理read指令时更新寄存器的污染状态
+        '''
+        pointer_repr = self.__get_taint(pointer_addr)
+        # 指针未被标记，wash目标寄存器污点
+        if pointer_repr is None:
+            self.__wash(reg)
+        # 寄存器传递
+        else:
+            self.__taint(reg, pointer_repr)
+
+    def update_pointer(self, pointer_addr, reg, reg_val):
+        '''
+        处理write指令时实现指针状态的传递
+        '''
+        # initial assignment
+        if self.is_init_assignment(reg_val):
+            uaddr = reg_val
+            uaddr_repr = self.uaddr_pool[uaddr]
+            uaddr_repr.stat = UaddrStat.INUSE
+            # 这是唯一一个可以解除指针悬挂状态的地方
+            uaddr_repr.appendRef(PointerRepr(
+                point_to=uaddr, stat=PointerStat.VALID))
+        else:
+            pointer_repr = self.__get_taint(reg)
+            # reg未携带指针状态，wash目标污点
+            if pointer_repr is None:
+                self.__wash(pointer_addr)
+            # 一般传递
+            else:
+                self.__taint(pointer_addr, pointer_repr)
+
+
 class Watcher:
 
-    def is_uaf(self, addr):
+    def is_basic_uaf(self, addr):
         '''
         addr in ta -> Valid memory access;
         addr not in ta && addr not in tf -> Invalid memory access;
@@ -321,6 +470,38 @@ class Watcher:
         if not addr_in_ta and addr_in_tf:
             return True
         return False
+
+    def is_dangling_uaf(self, pointer_addr, reg, reg_val):
+        '''
+        该方法只会被inst_write()或inst_call()调用。
+        在effective address为悬空指针时，存在以下三种非UAF的例外情况：
+        1. write时，reg_val是一个INIT状态的uaddr（初始化）；
+        2. write时，reg表示一个有效指针（传递有效指针）；
+        3. write时，reg表示一个悬空指针（传递悬空指针）。
+        在reg未被污染，且effective address为悬空指针时，表明出现UAF；
+        除此以外，均为正常情况。
+
+        type(pointer_addr) is str时表示检查call指令是否出发UAF
+        '''
+        if type(pointer_addr) is str:
+            return self.taint_tracer.is_dangling_pointer(pointer_addr)
+        if self.taint_tracer.is_init_assignment(reg_val):
+            return False
+        if not self.taint_tracer.is_reg_tainted(reg):
+            return self.taint_tracer.is_dangling_pointer(pointer_addr)
+        return False
+
+    def is_uaf(self, addr, reg=None, reg_val=None):
+        '''
+        addr为int时，先检查是否产生了基本UAF，若有则直接返回；
+        若无，再判断是否因使用了悬空指针而造成UAF。
+        如果addr不是int，说明此时addr代表寄存器名，
+        此时则直接判断程序是否正在使用悬空指针。
+        '''
+        uaf = False
+        if type(addr) is int and self.is_basic_uaf(addr)
+        return True
+        return self.is_dangling_uaf(addr, reg, reg_val)
 
     def is_heap_overflow(self, addr, size):
         is_new_seq = self.srw.is_new_seq()
@@ -339,6 +520,7 @@ class Watcher:
 
     def malloc(self, ret, size):
         self.heap_repr.allocate(HeapBlock(ret, size))
+        self.taint_tracer.on_allocate(ret)
 
     def calloc(self, ret, nmemb, size):
         self.malloc(ret, nmemb * size)
@@ -350,27 +532,43 @@ class Watcher:
 
     def free(self, addr):
         self.heap_repr.free(addr)
+        self.taint_tracer.on_free(addr)
 
-    def inst_read(self, addr, size):
+    def inst_read(self, addr, size, reg, reg_val):
         self.srw.update('r', addr, size)
-        is_uaf = self.is_uaf(addr)
-        # is_overflow = self.is_heap_overflow(addr, size)
+        is_uaf = self.is_basic_uaf(addr)
+        self.taint_tracer.update_reg(addr, reg, reg_val)
         if is_uaf:
             return (InstStat.UAF, self.srw.get_base(), self.srw.get_size())
-        # if is_overflow:
-        #     return InstStat.OVF
         # TODO： 正常情况下也要返回去抖序列，便于villoc装箱
         return (InstStat.OK,)
 
-    def inst_write(self, addr, size):
+    def inst_write(self, addr, size, reg, reg_val):
+        '''
+        write指令中，如果addr是悬空指针，说明发生了UAF，可直接返回；
+        反之，引起指针状态传递。
+        '''
+        # TODO: 考虑一下序列读写记录是否需要改动
         self.srw.update('w', addr, size)
-        is_uaf = self.is_uaf(addr)
+        is_uaf = self.is_uaf(addr, reg, reg_val)
         is_overflow = self.is_heap_overflow(addr, size)
+        self.taint_tracer.update_pointer(addr, reg, reg_val)
+        # TODO: 考虑是否可能同时发生多种内存错误
         if is_uaf:
             return (InstStat.UAF, self.srw.get_base(), self.srw.get_size())
         if is_overflow:
             return (InstStat.OVF, self.srw.get_base(), self.srw.get_size())
         # TODO: 正常情况下也要返回去抖序列，便于villoc装箱
+        return (InstStat.OK,)
+
+    def inst_call(self, reg):
+        '''
+        如果call指令执行时reg实际上是一个悬空指针，说明出现了UAF。
+        '''
+        # 此时传入的第三个参数只是为了占位，以便复用方法调用，没有实际用途
+        is_uaf = self.is_uaf(reg, reg, -1)
+        if is_uaf:
+            return (InstStat.UAF, -1, -1)
         return (InstStat.OK,)
 
     def __init__(self, talloc=None):
@@ -387,11 +585,13 @@ class Watcher:
             'calloc': self.calloc,
             'realloc': self.realloc,
             'r': self.inst_read,
-            'w': self.inst_write
+            'w': self.inst_write,
+            'call': self.inst_call
         }
         self.srw = SeqRW()
-        self.critical_depth = None
-        self.critical_value = None
+        self.critical_depth = None  # 用于标记连续free的深度，去除抖动
+        self.critical_value = None  # 用于标记连续free的参数，去除抖动
+        self.taint_tracer = TaintTracer()
 
     def handle_op(self, op_str, *etc):
         if op_str not in self.operations:
@@ -399,9 +599,15 @@ class Watcher:
         op = self.operations[op_str]
         return op(*etc)
 
-    func_call_patt = re.compile(r"^(\d+)\s*(\d+)?\s*([A-z_]+)\((.*)\)$")
-    func_ret_patt = re.compile(r"^(\d+)\s*(\d+)?\s*returns: (.+)$")
-    inst_patt = re.compile(r"^(\d+)\s*(r|w) @ (.+) (.+)$")
+    # e.g. 35463     calloc(0x40, 0x1)
+    func_call_patt = re.compile(r"^(\d+)\s*(\d+)\s*([A-z_]+)\((.*)\)$")
+    # e.g. 50978     returns: 0x5654ff382260
+    func_ret_patt = re.compile(r"^(\d+)\s*(\d+)\s*returns: (.+)$")
+    # e.g. 50979     w < 0x7ffda49c0e00 0x8 rax 0x5654ff382260
+    #      50980     w @ 0x7ffda49c0df8 0x8 *invalid* 0
+    inst_patt = re.compile(r"^(\d+)\s*(r|w) (@|<|>) (.+) (.+) (.+) (.+)$")
+    # e.g. 53547     call rdx
+    inst_call_patt = re.compile(r"^(\d+)\s*(call) (.+)$")
 
     def watch_line(self, line):
         line = line.strip()
@@ -414,7 +620,8 @@ class Watcher:
                 _, depth, op, arg = self.func_call
                 depth = int(depth)
                 ret = ("skip",)
-                print((self.critical_depth is not None and self.critical_depth+1 == depth and self.critical_value == arg))
+                print((self.critical_depth is not None and self.critical_depth +
+                       1 == depth and self.critical_value == arg))
                 if not(self.critical_depth is not None and self.critical_depth+1 == depth and self.critical_value == arg):
                     self.handle_op(op, Misc.sanitize(arg))
                     ret = (op, 0, Misc.sanitize(arg))
@@ -439,12 +646,21 @@ class Watcher:
         # 读取指令执行事件
         inst_exec = self.inst_patt.findall(line)
         if len(inst_exec) > 0:
-            _, op, addr, size = inst_exec[0]
+            _, op, typ, addr, size, reg, reg_val = inst_exec[0]
             addr = Misc.sanitize(addr)
             size = Misc.sanitize(size)
-            result = self.handle_op(op, addr, size)
+            reg = Misc.sanitize(reg)
+            reg_val = Misc.sanitize(reg_val)
+            result = self.handle_op(op, addr, size, reg, reg_val)
             # self.status.append((_id, op, addr))
-            # TODO: result需要携带更多信息，例如溢出时需要携带溢出长度、溢出操作起点
+            return (op, *result)
+        # 读取call指令执行事件
+        call_exec = self.inst_call_patt.findall(line)
+        if len(call_exec) > 0:
+            _, op, reg = call_exec[0]
+            op = Misc.sanitize(op)
+            reg = Misc.sanitize(reg)
+            result = self.handle_op(op, reg)
             return (op, *result)
 
     def watch(self):
