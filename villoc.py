@@ -264,7 +264,7 @@ class MemoryStateStash:
         if self.type is None:
             self.__do_update(type_, base, size)
             return False
-        if type_ != self.type or base != self.base:
+        if size <= self.size or type_ != self.type or base != self.base:
             self.__do_update(type_, base, size)
             return True
         else:
