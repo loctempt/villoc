@@ -315,7 +315,8 @@ class UaddrRepr:
         self.refs.append(ref)
 
     def removeRef(self, ref):
-        self.refs.remove(ref)
+        if ref in self.refs:
+            self.refs.remove(ref)
 
 class PointerRepr:
     def __init__(self, pointerRepr=None, point_to=None, stat=None):
@@ -343,7 +344,8 @@ class TaintTracer:
         if pointer_addr not in self.pointer_pool:
             return
         uaddr = self.pointer_pool[pointer_addr].point_to
-        self.uaddr_pool[uaddr].removeRef(pointer_addr)
+        if uaddr in self.uaddr_pool:
+            self.uaddr_pool[uaddr].removeRef(pointer_addr)
         self.pointer_pool.pop(pointer_addr)
 
     def __wash(self, pointer_addr):
@@ -412,6 +414,9 @@ class TaintTracer:
 
     # 在free时调用
     def on_free(self, uaddr):
+        # 防止对同一地址free多次时出错
+        if uaddr not in self.uaddr_pool:
+            return
         uaddr_repr: UaddrRepr = self.uaddr_pool[uaddr]
         for pointerRepr in uaddr_repr.refs:
             pointerRepr.stat = PointerStat.DANGLING
@@ -443,8 +448,9 @@ class TaintTracer:
             uaddr_repr = self.uaddr_pool[uaddr]
             uaddr_repr.stat = UaddrStat.INUSE
             # 这是唯一一个可以解除指针悬挂状态的地方
-            uaddr_repr.appendRef(PointerRepr(
-                point_to=uaddr, stat=PointerStat.VALID))
+            pointer_repr = PointerRepr(point_to=uaddr, stat=PointerStat.VALID)
+            uaddr_repr.appendRef(pointer_repr)
+            self.pointer_pool[pointer_addr] = pointer_repr
         else:
             pointer_repr = self.__get_taint(reg)
             # reg未携带指针状态，wash目标污点
@@ -498,9 +504,8 @@ class Watcher:
         如果addr不是int，说明此时addr代表寄存器名，
         此时则直接判断程序是否正在使用悬空指针。
         '''
-        uaf = False
-        if type(addr) is int and self.is_basic_uaf(addr)
-        return True
+        if type(addr) is int and self.is_basic_uaf(addr):
+            return True
         return self.is_dangling_uaf(addr, reg, reg_val)
 
     def is_heap_overflow(self, addr, size):
@@ -620,8 +625,8 @@ class Watcher:
                 _, depth, op, arg = self.func_call
                 depth = int(depth)
                 ret = ("skip",)
-                print((self.critical_depth is not None and self.critical_depth +
-                       1 == depth and self.critical_value == arg))
+                # print((self.critical_depth is not None and self.critical_depth +
+                    #    1 == depth and self.critical_value == arg))
                 if not(self.critical_depth is not None and self.critical_depth+1 == depth and self.critical_value == arg):
                     self.handle_op(op, Misc.sanitize(arg))
                     ret = (op, 0, Misc.sanitize(arg))
@@ -646,7 +651,7 @@ class Watcher:
         # 读取指令执行事件
         inst_exec = self.inst_patt.findall(line)
         if len(inst_exec) > 0:
-            _, op, typ, addr, size, reg, reg_val = inst_exec[0]
+            _, op, __, addr, size, reg, reg_val = inst_exec[0]
             addr = Misc.sanitize(addr)
             size = Misc.sanitize(size)
             reg = Misc.sanitize(reg)
@@ -748,7 +753,8 @@ class Worker:
 
     def subscribe(self, observable: Observable):
         observable.subscribe(
-            on_next=lambda trace: print(trace)
+            on_next=lambda trace: print(trace),
+            # on_error=lambda trace: print(trace)
         )
 
 
