@@ -2,6 +2,8 @@ from enum import Enum
 
 class InstStat(Enum):
     OK = 0
+    UAF_DANGLING = -4
+    UAF_BASIC = -3
     IDLE = -2
     ERR = -1
     UAF = "Use After Free"

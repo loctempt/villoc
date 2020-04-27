@@ -114,7 +114,7 @@ class Empty(Printable):
 
         m_states = ""
         for memory_state in self.memory_states:
-            e_type, base, _ = memory_state
+            e_type, base, _, __ = memory_state
             if self.start() > base or self.end() <= base:
                 continue
             m_states += "<br/>{}".format(e_type.value)
@@ -172,7 +172,7 @@ class Block(Printable):
 
         m_states = ""
         for memory_state in self.memory_states:
-            e_type, base, _ = memory_state
+            e_type, base, _, __ = memory_state
             if self.start() > base or self.end() <= base:
                 continue
             m_states += "<br/>{}".format(e_type.value)
@@ -237,38 +237,40 @@ class MemoryStateStash:
         self.type = None
         self.base = -1
         self.size = -1
+        self.reason = None
         self.prev_type = None
         self.prev_base = -1
         self.prev_size = -1
+        self.prev_reason = None
 
-    def __do_update(self, type_, base, size):
-        self.prev_type, self.prev_base, self.prev_size = \
-            self.type, self.base, self.size
-        self.type, self.base, self.size = \
-            type_, base, size
+    def __do_update(self, type_, base, size, reason):
+        self.prev_type, self.prev_base, self.prev_size, self.prev_reason = \
+            self.type, self.base, self.size, self.reason
+        self.type, self.base, self.size, self.reason = \
+            type_, base, size, reason
 
     def clear(self):
-        self.__do_update(None, -1, -1)
+        self.__do_update(None, -1, -1, None)
 
     def get_prev_state(self):
-        return self.prev_type, self.prev_base, self.prev_size
+        return self.prev_type, self.prev_base, self.prev_size, self.prev_reason
 
     def get_curr_state(self):
-        return self.type, self.base, self.size
+        return self.type, self.base, self.size, self.reason
 
-    def update(self, type_, base, size) -> bool:
+    def update(self, type_, base, size, reason) -> bool:
         '''
         base或type发生变化：返回True
         base及type未变化：返回False
         '''
         if self.type is None:
-            self.__do_update(type_, base, size)
+            self.__do_update(type_, base, size, reason)
             return False
         if size <= self.size or type_ != self.type or base != self.base:
-            self.__do_update(type_, base, size)
+            self.__do_update(type_, base, size, reason)
             return True
         else:
-            self.__do_update(self.type, self.base, size)
+            self.__do_update(self.type, self.base, size, self.reason)
             return False
 
 
@@ -341,31 +343,31 @@ class TimelineRepr:
         self.__boundaries.update(state.boundaries())
         self.__timeline.append(state)
 
-    def append_memory_state_info(self, e_type, base, size):
+    def append_memory_state_info(self, e_type, base, size, reason):
         state = self.__timeline[-1]
-        state.memory_states.append((e_type, base, size))
+        state.memory_states.append((e_type, base, size, reason))
         # state.info.append(
         #     "{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
 
     def handle_inst(self, inst, variables: tuple):
         '''
         variables格式：
-        (InstStat, [<base>, <size>])
+        (InstStat, [<base>, <size>, <reason>])
         '''
         if variables[0] == InstStat.OK:
             return
         memory_state_updated = self.__memory_state_stash.update(*variables)
         if memory_state_updated:
-            e_type, base, size = self.__memory_state_stash.get_prev_state()
-            self.append_memory_state_info(e_type, base, size)
+            e_type, base, size, reason = self.__memory_state_stash.get_prev_state()
+            self.append_memory_state_info(e_type, base, size, reason)
             # state = self.__timeline[-1]
             # state.info.append("{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
 
     def flush_memory_state(self):
-        e_type, base, size = self.__memory_state_stash.get_curr_state()
+        e_type, base, size, reason = self.__memory_state_stash.get_curr_state()
         if e_type is None:
             return
-        self.append_memory_state_info(e_type, base, size)
+        self.append_memory_state_info(e_type, base, size, reason)
         # state = self.__timeline[-1]
         # state.info.append(
         #     "{} -- base:{:#x} size:{:#x}".format(e_type.value, base, size))
@@ -606,9 +608,9 @@ class Misc:
             out.write('<p>%s</p>' % html.escape(str(msg)))
         # 将异常信息显示在state的空白处
         for memory_state in state.memory_states:
-            e_type, base, size = memory_state
+            e_type, base, size, reason = memory_state
             out.write(
-                "<p>{} -- base:{:#x} size:{:#x}</p>".format(e_type.value, base, size))
+                "<p>[{}] -- {} -- base:{:#x} size:{:#x}</p>".format(e_type.value, reason, base, size))
 
         for msg in state.errors:
             out.write('<p>%s</p>' % html.escape(str(msg)))

@@ -438,7 +438,14 @@ class Watcher:
         # if type(addr) is int and self.is_basic_uaf(addr):
         #     return True
         # return self.is_dangling_uaf(addr, reg, reg_val)
-        return self.is_basic_uaf(dst_addr) or self.is_dangling_uaf(dst_reg)
+        # return self.is_basic_uaf(dst_addr) or self.is_dangling_uaf(dst_reg)
+        if self.is_basic_uaf(dst_addr):
+            # return "Potential WRITE to TF area."
+            return InstStat.UAF_BASIC
+        if self.is_dangling_uaf(dst_reg):
+            # return "Using a dangling pointer."
+            return InstStat.UAF_DANGLING
+        return None
 
     def is_heap_overflow(self, addr, size):
         is_new_seq = self.srw.is_new_seq()
@@ -450,10 +457,10 @@ class Watcher:
         ta = self.heap_repr.get_ta()
         block = self.heap_repr.is_addr_valid(ta, base_addr)
         if not block:
-            return False
+            return None
         if self.srw.end() > block.end():
-            return True
-        return False
+            return ""
+        return None
 
     def malloc(self, ret, size):
         tf = self.heap_repr.get_tf()
@@ -484,13 +491,17 @@ class Watcher:
         '''
         self.srw.update('w', addr, size)
         # addr = reg_written if reg_written is not None else addr
-        uaf = self.is_uaf(addr, dst_reg)
-        heap_overflow = self.is_heap_overflow(addr, size)
+        uaf_reason = self.is_uaf(addr, dst_reg)
+        heap_overflow_reason = self.is_heap_overflow(addr, size)
         self.taint_tracer.try_update_uaddr_pool(reg_val, addr)
-        if uaf:
-            return (InstStat.UAF, self.srw.get_base(), self.srw.get_size())
-        if heap_overflow:
-            return (InstStat.OVF, self.srw.get_base(), self.srw.get_size())
+        if uaf_reason:
+            if uaf_reason is InstStat.UAF_BASIC:
+                ret_reason = "Potential WRITE to TF area."
+            elif uaf_reason is InstStat.UAF_DANGLING:
+                ret_reason = "WRITE using a dangling pointer."
+            return (InstStat.UAF, self.srw.get_base(), self.srw.get_size(), ret_reason)
+        if heap_overflow_reason:
+            return (InstStat.OVF, self.srw.get_base(), self.srw.get_size(), heap_overflow_reason)
         return (InstStat.OK,)
 
     def inst_mov(self, dst, src, reg_val):
@@ -501,9 +512,9 @@ class Watcher:
         如果call指令执行时reg实际上是一个悬空指针，说明出现了UAF。
         '''
         # 此时传入的第三个参数只是为了占位，以便复用方法调用，没有实际用途
-        uaf = self.is_uaf(addr, reg)
-        if uaf:
-            return (InstStat.UAF, addr, 0)
+        uaf_reason = self.is_uaf(addr, reg)
+        if uaf_reason:
+            return (InstStat.UAF, addr, 0, "CALL using a dangling pointer.")
         return (InstStat.OK,)
 
     def __init__(self, talloc=None):
